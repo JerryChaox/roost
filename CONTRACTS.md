@@ -192,15 +192,30 @@ roost_turns
 ### 语义钉死
 
 - `begin_turn` 返回 True 当且仅当：行不存在（插入 running）、或行 status='requeued'
-  （接管为 running 并 bump attempt）。行为 running（无论锁是否过期）或
-  finished/failed 一律 False——过期锁的接管**只**走 sweep→requeue→再投递路径，
-  begin_turn 自身绝不抢锁。
+  （接管为 running）。行为 running（无论锁是否过期）或 finished/failed 一律
+  False——过期锁的接管**只**走 sweep→requeue→再投递路径，begin_turn 自身绝不抢锁。
+- **attempt 的唯一 +1 所有者是投递方**（失败/sweep 重投时递增）。begin_turn 接管
+  requeued 行时写 `MAX(行值, envelope 值)` 保持单调，绝不自行加法——行与 envelope
+  永不双计。attempt 仅观测，不参与幂等。
 - `sweep_due_turns`：单事务内选出 status='running' 且 locked_until<=now 的行，
   置为 'requeued' 并返回其 TurnEnvelope（attempt 原值；投递方重投时 +1）。
 - `has_active_turn`：EXISTS(session_id 匹配、status='running'、locked_until>now)，
   可排除指定 turn_id。锁过期的 running 行不算 active（与来源实现一致：wedged turn
   可被 sweep 恢复）。
 - `renew_turn_lock` / `finish_turn`：仅作用于 status='running' 的行，其余静默 no-op。
+  `finish_turn` 的 status 只接受终态词汇 `'finished'`/`'failed'`，其余 raise
+  ValueError——`'running'`/`'requeued'` 归 begin_turn/sweep 所有，禁止外部写入。
+- `swap_binding(old=None)` 覆盖两种"未绑定"：行不存在（插入）与行存在但
+  sandbox_id IS NULL（条件 UPDATE）。后者在 M1 无产生路径（尚无 unbind），
+  为 M6 forced-update/解绑预留，契约套件暂不覆盖属预期。
+- TurnProcessor 的 cancel 语义：process 被 cancel 时不吞 CancelledError、不
+  finish_turn——让锁自然过期交给 sweep 认领；runner 抛异常是终态
+  （finish_turn('failed')），恢复只走 sweep 单一路径。
+- InProcessTurnDelivery：消费失败重投 attempt+1，达到 max_attempts（默认 5）停止
+  重投并落入可检查的 `dropped`——投递层的放弃必须可观测，不得静默。
+- **M1 串行化边界**：串行门与幂等门是两次独立 CAS，同 session 两个不同 turn
+  并发消费时可能同时越过串行门；单消费者（默认 concurrency=1）下不可达，
+  多 worker 的 session 互斥由后续里程碑的 advisory lock 承接。
 - 全部状态转换用单语句条件 UPDATE 表达 CAS；不依赖跨语句事务隔离级别。
 - 时间：locked_until 用宿主时钟 unix epoch。SQLite 默认实现按单写者进程假设，
   文档注明；Postgres 实现（后续里程碑）无此假设。

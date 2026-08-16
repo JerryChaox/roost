@@ -1,8 +1,10 @@
 """roost — durable, exactly-once agent sessions on disposable sandboxes.
 
-骨架阶段：仅公开 CONTRACTS.md 钉死的类型、事件、ports 与协议常量，无行为实现。
+公开 CONTRACTS.md 钉死的类型、事件、ports 与协议常量，以及 M1 状态与投递内核
+（SQLite StateStore、进程内 TurnDelivery、turn pipeline）。
 """
 
+from .delivery import InProcessTurnDelivery
 from .events import (
     Delta,
     DisplayEvent,
@@ -21,6 +23,7 @@ from .ports import (
     StateStore,
     TurnDelivery,
 )
+from .pipeline import TurnProcessor
 from .protocol import (
     ENV_PREFIX,
     HEADER_PREFIX,
@@ -30,6 +33,7 @@ from .protocol import (
     TURN_ENDPOINT,
     UPDATE_ENDPOINT,
 )
+from .store import SQLiteStateStore
 from .types import (
     RuntimeStamp,
     SandboxHandle,
@@ -62,6 +66,10 @@ __all__ = [
     "EventSink",
     "SessionContextProvider",
     "OpsRecorder",
+    # M1 内核
+    "SQLiteStateStore",
+    "InProcessTurnDelivery",
+    "TurnProcessor",
     # protocol
     "PROTOCOL_VERSION",
     "HEADER_PREFIX",
