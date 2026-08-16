@@ -162,3 +162,61 @@ UPDATE_ENDPOINT = "/v1/update"
 
 默认实现（进程内队列、SQLite store、E2B backend）、registry/watchdog/reducer 逻辑、
 driver 本体、任何测试（无行为可保护）。这些属于后续里程碑。
+
+## 附录 A：M1 内核契约（2026-08-17 钉定）
+
+### StateStore 最小表结构（SQLite / Postgres 中性）
+
+```
+roost_sessions
+  session_id TEXT PK
+  sandbox_id TEXT NULL           -- NULL = 未绑定
+  sandbox_backend TEXT NULL
+  stamp_bound_at TEXT NULL       -- ISO8601 UTC
+  stamp_template_id TEXT NULL
+  stamp_runtime_files_hash TEXT NULL
+  updated_at TEXT NOT NULL
+
+roost_turns
+  turn_id TEXT PK
+  session_id TEXT NOT NULL
+  status TEXT NOT NULL           -- 'running' | 'finished' | 'failed' | 'requeued'
+  payload TEXT NOT NULL          -- JSON
+  context TEXT NOT NULL          -- JSON
+  attempt INTEGER NOT NULL
+  locked_until REAL NOT NULL     -- unix epoch 秒
+  created_at TEXT NOT NULL
+  finished_at TEXT NULL
+```
+
+### 语义钉死
+
+- `begin_turn` 返回 True 当且仅当：行不存在（插入 running）、或行 status='requeued'
+  （接管为 running 并 bump attempt）。行为 running（无论锁是否过期）或
+  finished/failed 一律 False——过期锁的接管**只**走 sweep→requeue→再投递路径，
+  begin_turn 自身绝不抢锁。
+- `sweep_due_turns`：单事务内选出 status='running' 且 locked_until<=now 的行，
+  置为 'requeued' 并返回其 TurnEnvelope（attempt 原值；投递方重投时 +1）。
+- `has_active_turn`：EXISTS(session_id 匹配、status='running'、locked_until>now)，
+  可排除指定 turn_id。锁过期的 running 行不算 active（与来源实现一致：wedged turn
+  可被 sweep 恢复）。
+- `renew_turn_lock` / `finish_turn`：仅作用于 status='running' 的行，其余静默 no-op。
+- 全部状态转换用单语句条件 UPDATE 表达 CAS；不依赖跨语句事务隔离级别。
+- 时间：locked_until 用宿主时钟 unix epoch。SQLite 默认实现按单写者进程假设，
+  文档注明；Postgres 实现（后续里程碑）无此假设。
+
+### M1 交付模块与内部接口
+
+- `roost/store/sqlite.py`：SQLiteStateStore（实现 StateStore port）。
+- `roost/delivery/inproc.py`：InProcessTurnDelivery（实现 TurnDelivery；asyncio 队列，
+  at-least-once：消费失败重投并 attempt+1，可注入人为重复投递用于测试）。
+- `roost/pipeline.py`：TurnProcessor——投递消费端。内部构造
+  `TurnProcessor(store, runner)`，`runner: Callable[[TurnEnvelope], Awaitable[None]]`
+  （M1 用 fake，M3 起接 sandbox 链路）。process 流程：
+  `has_active_turn(排除自身) → 排队等待（简单重投延后）；begin_turn False → 丢弃；
+  True → runner → finish_turn('finished'/'failed')`。runner 期间由 TurnProcessor
+  以 lock_seconds/2 周期 renew_turn_lock。
+- 测试（防回归目标明确）：StateStore 契约套件（begin/sweep/active/CAS 语义，
+  对未来所有实现复用）；pipeline 幂等测试——并发把同一 turn_id enqueue N 次，
+  runner 恰好执行 1 次；sweep 恢复测试——runner 挂死（锁过期）→ sweep → 重投 →
+  第二次执行成功且总执行次数为 2（requeue 是显式允许的重跑）。
