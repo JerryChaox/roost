@@ -235,3 +235,76 @@ roost_turns
   对未来所有实现复用）；pipeline 幂等测试——并发把同一 turn_id enqueue N 次，
   runner 恰好执行 1 次；sweep 恢复测试——runner 挂死（锁过期）→ sweep → 重投 →
   第二次执行成功且总执行次数为 2（requeue 是显式允许的重跑）。
+
+## 附录 B：M2 driver 子系统与控制协议契约（2026-08-17 钉定）
+
+### Wire 约定
+
+- 编码：JSON / UTF-8。请求与响应均带 header `X-Roost-Protocol-Version: 1`；
+  版本不识别时响应 400 并在 body 给 `{"error": "unsupported_protocol_version"}`。
+- TurnEnvelope wire 形状 = types.py 字段原名 JSON。DriverEvent wire 形状 =
+  dataclass 字段 + 判别字段 `"type"`（"delta" | "tool_event" | "lifecycle_notice"
+  | "terminal"）。编解码器是双端共用的同一实现（`roost/control/envelope.py`；
+  driver 打包时携带同一份）。
+
+### 端点行为
+
+- `POST /v1/turn`：body 为 TurnEnvelope。200 响应
+  `{"turn_id", "state": "accepted" | "duplicate"}`——重复提交（registry 已见
+  turn_id）返回 "duplicate" 与既有条目现态，**绝不重新入队**（I1 driver 侧）。
+  body 非法 → 400。
+- `GET /v1/health`：200 `{"ok": true, "protocol_version", "uptime_ms",
+  "harness_ready": bool}`。
+- `GET /v1/turn/{turn_id}/events?after=<seq>&wait_ms=<n>`：长轮询 pull。返回
+  seq > after 的事件列表与 `next_after`；无新事件时最多等待 wait_ms（上限 30000，
+  默认 10000）再返回空列表。未知 turn_id → 404。**事件流承载机制就此钉定为
+  host 长轮询 pull**（DESIGN §6 悬置项关闭）：只依赖 SandboxBackend.request
+  已有通道，零新增基础设施；host 侧 cursor（after）语义让重复读天然幂等。
+- `POST /v1/update`：M2 仅保留协议位，响应 501 `{"error": "reserved_until_m6"}`。
+
+### Turn registry 语义（I1 driver 侧）
+
+- 进程内 dict，键 turn_id，生命周期与 driver 进程绑定（DESIGN §四已明文）。
+- 条目状态机：`queued → running → done(status)`；duplicate POST 在任何状态下
+  只读返回，绝不产生第二次执行。
+- 执行序：单 harness worker，FIFO——driver 内天然串行，不存在并发 turn。
+- 事件存储：per-turn 内存列表，seq 自 1 单调递增，Terminal 恒为最后一条。
+  M2 不设内存上限（有界化随 M6 生产化处理，PROTOCOL.md 注明）。
+
+### Harness 接口（driver 内部 port）
+
+```python
+class Harness(Protocol):
+    async def run(self, turn: TurnEnvelope, emit: Callable[[DriverEvent], None]) -> None:
+        """执行一个 turn，经 emit 产出事件；实现负责在结束前 emit Terminal。
+        run 抛异常时由 worker 兜底 emit Terminal(status='error')。"""
+```
+
+- M2 交付 `EchoHarness`（回显 payload 为若干 Delta + Terminal，可注入延迟/异常，
+  测试用）。真实 Claude Agent SDK harness 归 M3。
+
+### M2 交付模块
+
+- `src/roost/control/envelope.py`（wire 编解码，纯函数，无 IO）、
+  `src/roost/control/client.py`（宿主侧协议客户端：经 SandboxBackend.request
+  提交 turn / 拉事件 / health，含超时与 duplicate 处理；不做业务重试策略）。
+- `src/roost/driver/`：`server.py`（HTTP 路由与编解码边界）、`registry.py`
+  （turn registry 状态机，纯内存无 IO，独立可测）、`worker.py`（FIFO 执行循环
+  与异常兜底）、`harness.py`（Harness protocol + EchoHarness）、`emit.py`
+  （seq 分配与 per-turn 事件缓存）、`__main__.py`（`python -m roost.driver`
+  启动，端口经 ROOST_DRIVER_PORT，默认 8787，绑定 127.0.0.1）。
+- driver 约束：仅标准库（沙箱内零安装依赖）；HTTP 实现选型（http.server /
+  asyncio 手写最小实现）由实现者定，但路由/编解码/状态机/执行循环四类职责
+  不得混居一个模块（ROADMAP 反腐化原则）。
+- `PROTOCOL.md`（仓库根）：以本附录为骨架成文，含幂等契约明文段（DESIGN §四）
+  与版本化规则。
+- 测试：registry 状态机单测（duplicate 各状态只读返回）；**子进程端到端协议
+  测试**——以 `python -m roost.driver` 起真实 driver 进程 + EchoHarness，走
+  localhost HTTP：重复 POST 同 turn_id 恰好执行一次、事件长轮询含 cursor 续读、
+  harness 异常时 Terminal(status='error') 兜底、health 就绪。envelope 编解码
+  round-trip 属性测试（对四种事件类型）。
+
+### M2 明确不包含
+
+真实 Claude Agent SDK harness（M3）、driver 打包成单 artifact 与 fingerprint
+（M6 前置）、`/v1/update` 行为（M6）、事件缓存有界化（M6）。
