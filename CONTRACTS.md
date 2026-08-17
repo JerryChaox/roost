@@ -465,3 +465,47 @@ Claude Agent SDK harness 拆为 M3c（M8 前完成）；快照恢复/备份不�
 - Demo 2 端到端（真 docker）：counter turn（=1）→ 备份完成 → `docker rm -f`
   → 下一 turn 自动重建并恢复工作区 → counter=2。恢复失败路径：注入损坏
   snapshot → boot 失败且不留活容器。
+
+## 附录 H：M5 watchdog 与 liveness 契约（2026-08-17 钉定）
+
+### 卡死恢复的单一路径（I3 前半）
+
+hang 的定义：turn 已提交、driver 事件流在 `stall_timeout` 内颗粒无收（以"含事件
+的响应页"为准，空长轮询页不重置计时）。恢复只有一条路径：
+
+1. `runner.py`：长轮询循环维护"上次收到事件"的时刻；停滞超过 `stall_timeout`
+   → 经 registry 销毁当前沙箱（backend.kill + ops 记录 `sandbox_stalled_killed`；
+   绑定行保留，指向死沙箱——下次 get_or_create 的 health 探测自然走 cold boot）
+   → raise `TurnStalledError`（定义在 runner.py）。
+2. `pipeline.py`：`except TurnStalledError` 专案——**不 finish_turn、不吞成
+   failed**，heartbeat 随 process 返回而停，锁在 lock_seconds 内自然过期。
+   这是附录 A"过期锁只走 sweep 路径"的消费端。
+3. `src/roost/watchdog.py`：`Watchdog(store, delivery, *, interval, sweep_limit,
+   ops=None)`——后台循环 `sweep_due_turns(limit)`，对每个返回的 envelope
+   `enqueue(replace(attempt+1))`（附录 A：投递方是 attempt 唯一 +1 所有者）；
+   非空 sweep 经 ops 记 `watchdog_requeued`（含 turn_id 列表）；start/stop
+   生命周期与取消语义同既有后台任务模式。
+4. 重投的 turn 经正常投递 → begin_turn 接管 requeued 行 → get_or_create 对死
+   沙箱 cold boot（工作区自快照恢复，M4 已通）→ 新 driver 空 registry → 重跑
+   合法（I1 的唯一合法重跑形态）。
+
+### idle 不误杀（I3 的另一半）
+
+- 停滞计时以事件为粒度：慢而活着的 harness（事件间隔 < stall_timeout）永不触发。
+- `stall_timeout` 必须显著大于事件自然间隔、且与 lock_seconds 无耦合（锁由
+  heartbeat 维持，只在 process 退出后才会过期）。默认 60s，kw-only 可调。
+
+### 注入与测试
+
+- EchoHarness 增 payload 键 `hang_on_attempt: N`——`turn.attempt == N` 时不产出
+  任何事件并永久挂起（测试面，协议零增）。
+- 验收测试：
+  - 端到端（真 docker，短 stall_timeout/lock_seconds/interval）：
+    `hang_on_attempt=1` 的 turn → 停滞被杀 → watchdog requeue → attempt=2 在新
+    沙箱跑通拿到答案；断言 harness 恰好执行 2 次、行终态 finished、旧沙箱已销毁。
+  - idle 不误杀：事件间隔逼近但不超 stall_timeout 的慢 turn 正常完成，sweep 全程
+    空转、零 requeue。
+  - watchdog 单测（fake store/delivery）：sweep 空 → 无动作；非空 → 逐个
+    attempt+1 重投 + ops 记录；stop 干净取消。
+- 收尾项：`WORKSPACE_ENDPOINT` 自 control/client.py 收回 protocol.py
+  （附录 G 疑点 1 的裁定归宿）。
