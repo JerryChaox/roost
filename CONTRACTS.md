@@ -700,3 +700,18 @@ def session_critical(self, session_id: str) -> AsyncContextManager[None]:
   投递，fake runner 记录执行区间，断言永不重叠（SQLite 与 PG 两个实现都过）。
 - 全部既有契约套件在 PostgresStateStore 上通过。
 - 搁浅自愈（附录 H 增补）在 PG 上同样成立。
+
+## 附录 L 增补：M11 落地裁定（2026-08-17）
+
+- advisory key 弃用契约建议的 `hashtext`（官方文档未收录、内部哈希跨版本不稳定，
+  滚动升级窗口会算出不同 key 静默失锁），改宿主侧
+  `blake2b("roost:session:"+session_id, 8B)` → 带命名空间的 signed 64-bit。
+- 两条实现级正确性钉定（契约未预见，随代码 docstring）：临界区内的门检查
+  必须跑在持锁连接上（ContextVar 传递，否则连接池死锁）；临界区事务钉
+  `read_committed`（repeatable read 的快照先于锁冻结，会静默失去互斥）。
+- PG 类型：TIMESTAMPTZ（审计时间戳）/ DOUBLE PRECISION（locked_until，
+  宿主时钟 epoch——刻意不用 PG now()，多实例保持单一时间基）/ JSONB。
+  sweep 为单语句 `WITH … FOR UPDATE SKIP LOCKED … UPDATE … RETURNING`。
+- asyncpg 0.31（原生 asyncio、自带连接池）；pgbouncer 事务池需
+  `statement_cache_size=0`，构造参数透传。宿主不得在 PG 临界区内 spawn task
+  （共享连接并发），docstring 已注明。SQLite 的 session_critical 明确不跨进程。

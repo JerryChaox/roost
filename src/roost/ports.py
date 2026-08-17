@@ -4,6 +4,10 @@
 """
 
 from collections.abc import Callable
+
+# 契约（附录 L）里的签名写作 AsyncContextManager[None]；取 contextlib 的实体而不是
+# typing 的同名别名——后者自 3.9 起已弃用，别名迟早会被摘掉，签名文字则保持一致。
+from contextlib import AbstractAsyncContextManager as AsyncContextManager
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -39,6 +43,10 @@ class StateStore(Protocol):
         """CAS：仅当当前绑定 == old 时换绑到 new；forced update 的原子换绑入口。"""
 
     async def get_stamp(self, session_id: str) -> RuntimeStamp | None: ...
+
+    def session_critical(self, session_id: str) -> AsyncContextManager[None]:
+        """session 级互斥临界区：包住"串行门检查 + begin_turn"这段复合判定。
+        锁的持有时间 = 临界区本身（毫秒级），绝不覆盖 runner 执行期。"""
 
     async def has_active_turn(self, session_id: str, *, exclude_turn_id: str | None = None) -> bool: ...
 

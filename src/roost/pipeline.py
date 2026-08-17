@@ -12,10 +12,15 @@
 3. True → runner，其间以 lock_seconds/2 为周期 renew_turn_lock 心跳。
 4. 收尾 `finish_turn('finished' / 'failed')`。
 
-M1 串行化边界：串行门（has_active_turn）与幂等门（begin_turn）是两次独立的
-CAS，二者之间没有 session 级互斥。因此"同一 session 的两个**不同** turn 恰好
-并发消费"时可能同时越过串行门——单消费者（delivery concurrency=1，默认）下
-不可达；多 worker 场景的 session 互斥由后续里程碑的 advisory lock 承接。
+session 临界区（附录 L，关闭附录 A 的 M1 串行化边界）：串行门
+（has_active_turn）与幂等门（begin_turn）是两次独立的 CAS，二者之间若无
+session 级互斥，"同一 session 的两个**不同** turn 恰好并发消费"时会同时越过
+串行门。因此这两步一起放进 `store.session_critical(session_id)`——串行门通过后
+必须在同一临界区内完成 begin_turn 才释放。
+
+临界区的持有范围严格等于这段复合判定（毫秒级），**绝不覆盖 runner 执行期**：
+runner 一跑就是分钟级，锁若延伸到那里，跨实例的 Postgres advisory lock 会把
+连接和 session 一起钉死。串行门未通过时的等待/重投也在临界区**之外**完成。
 
 两条刻意的非对称（DESIGN.md 不变量 I1）：
 - runner 抛异常是**终态**：记 'failed' 并吞掉异常，不走投递重投；恢复只由
@@ -76,12 +81,21 @@ class TurnProcessor:
 
     async def process(self, turn: TurnEnvelope) -> None:
         """处理单个 turn。正常返回表示本次投递已被消化（执行、延后或丢弃）。"""
-        if not await self._pass_serial_gate(turn):
-            return
-
-        # 幂等门：只有这里返回 True 的那一次投递才会真正执行 runner。
-        if not await self._store.begin_turn(turn, lock_seconds=self._lock_seconds):
-            return
+        while True:
+            async with self._store.session_critical(turn.session_id):
+                if not await self._store.has_active_turn(
+                    turn.session_id, exclude_turn_id=turn.turn_id
+                ):
+                    # 串行门通过。幂等门必须在同一临界区内完成：只有这里返回 True
+                    # 的那一次投递才会真正执行 runner。
+                    if not await self._store.begin_turn(
+                        turn, lock_seconds=self._lock_seconds
+                    ):
+                        return
+                    break
+            # 串行门未通过。等待/重投一律在临界区之外做，绝不占着 session 锁睡觉。
+            if not await self._defer(turn):
+                return
 
         heartbeat = asyncio.ensure_future(self._heartbeat(turn.turn_id))
         try:
@@ -107,21 +121,18 @@ class TurnProcessor:
             except asyncio.CancelledError:
                 pass
 
-    async def _pass_serial_gate(self, turn: TurnEnvelope) -> bool:
-        """session 串行门：同一 session 同时只允许一个活跃 turn。
+    async def _defer(self, turn: TurnEnvelope) -> bool:
+        """串行门未通过时的延后处理（在临界区之外调用）。
 
-        返回 True 表示可以继续；False 表示本次投递已被延后处理。
+        返回 True 表示本任务应原地重试串行门；False 表示本次投递已交还投递层。
         """
-        while await self._store.has_active_turn(
-            turn.session_id, exclude_turn_id=turn.turn_id
-        ):
-            if self._delivery is not None:
-                not_before = datetime.now(timezone.utc) + timedelta(
-                    seconds=self._busy_retry_delay
-                )
-                await self._delivery.enqueue(turn, not_before=not_before)
-                return False
-            await asyncio.sleep(self._busy_retry_delay)
+        if self._delivery is not None:
+            not_before = datetime.now(timezone.utc) + timedelta(
+                seconds=self._busy_retry_delay
+            )
+            await self._delivery.enqueue(turn, not_before=not_before)
+            return False
+        await asyncio.sleep(self._busy_retry_delay)
         return True
 
     async def _heartbeat(self, turn_id: str) -> None:

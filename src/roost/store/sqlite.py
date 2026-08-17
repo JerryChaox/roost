@@ -24,8 +24,9 @@ import asyncio
 import os
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from typing import Any, TypeVar
 
 from ..types import RuntimeStamp, SandboxHandle, TurnEnvelope
@@ -82,6 +83,9 @@ class SQLiteStateStore:
         self._redelivery_grace_seconds = redelivery_grace_seconds
         self._conn: sqlite3.Connection | None = None
         self._closed = False
+        # session_id -> (asyncio.Lock, 等待者+持有者计数)。计数归零即回收，
+        # 避免长期运行的宿主按 session 无限堆积锁对象。
+        self._session_locks: dict[str, tuple[asyncio.Lock, int]] = {}
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="roost-sqlite-store"
         )
@@ -218,6 +222,32 @@ class SQLiteStateStore:
             stamp.runtime_files_hash,
             utc_now_iso(),
         )
+
+    # ---- session 临界区 -------------------------------------------------------
+
+    @asynccontextmanager
+    async def session_critical(self, session_id: str) -> AsyncIterator[None]:
+        """session 级互斥临界区（附录 L）：包住"串行门检查 + begin_turn"。
+
+        SQLite 实现 = 进程内 per-session `asyncio.Lock`，与本类的**单写者进程假设**
+        一致：跨进程/跨实例的互斥不在 SQLite 默认实现的承诺范围内，需要多消费者
+        请用 PostgresStateStore（advisory lock 跨连接生效）。
+
+        持有时间 = 临界区本身（毫秒级）。调用方绝不可把 runner 执行期放进来。
+        """
+        lock, waiters = self._session_locks.get(session_id, (None, 0))
+        if lock is None:
+            lock = asyncio.Lock()
+        self._session_locks[session_id] = (lock, waiters + 1)
+        try:
+            async with lock:
+                yield
+        finally:
+            _, count = self._session_locks[session_id]
+            if count <= 1:
+                del self._session_locks[session_id]
+            else:
+                self._session_locks[session_id] = (lock, count - 1)
 
     # ---- turn 生命周期 --------------------------------------------------------
 

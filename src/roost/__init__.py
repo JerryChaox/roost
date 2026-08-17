@@ -7,9 +7,10 @@ host 侧（wire 编解码与 ControlClient）。
 driver 子系统（`roost.driver`）是沙箱内实现，刻意不在顶层导出——宿主只经
 `roost.control` 与它对话。
 
-`E2BSandboxBackend` 是**惰性导出**（PEP 562 的模块级 `__getattr__`）：它依赖可选
-extra `roost[e2b]`，而核心必须零运行时依赖——没装 extra 的环境 `import roost`
-照常成功，只有真去取这个名字时才会 import 到 SDK（没装则报安装指引）。
+`E2BSandboxBackend`（extra `roost[e2b]`）与 `PostgresStateStore`
+（extra `roost[postgres]`，asyncpg）是**惰性导出**（PEP 562 的模块级
+`__getattr__`）：核心必须零运行时依赖——没装 extra 的环境 `import roost` 照常成功，
+只有真去取这些名字时才会 import 到可选依赖（没装则报安装指引）。
 """
 
 from typing import TYPE_CHECKING, Any
@@ -100,18 +101,24 @@ from .types import (
 
 if TYPE_CHECKING:  # 类型检查器要看得见真实符号，运行期仍然惰性
     from .backends import E2BSandboxBackend
+    from .store import PostgresStateStore
 
 __version__ = "0.0.1"
 
-_LAZY_BACKENDS = {"E2BSandboxBackend"}
+# 惰性导出名 -> 承载它的子模块（子模块自身也做惰性 import，见各自 __init__）。
+_LAZY_EXPORTS = {
+    "E2BSandboxBackend": "backends",   # extra roost[e2b]
+    "PostgresStateStore": "store",     # extra roost[postgres]
+}
 
 
 def __getattr__(name: str) -> Any:
-    """惰性解析可选依赖的导出（M7 的 E2BSandboxBackend）。"""
-    if name in _LAZY_BACKENDS:
-        from . import backends
+    """惰性解析可选依赖的导出（M7 的 E2BSandboxBackend、M11 的 PostgresStateStore）。"""
+    submodule = _LAZY_EXPORTS.get(name)
+    if submodule is not None:
+        from importlib import import_module
 
-        return getattr(backends, name)
+        return getattr(import_module(f".{submodule}", __name__), name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -151,6 +158,8 @@ __all__ = [
     "OpsRecorder",
     # M1 内核
     "SQLiteStateStore",
+    # M11 多消费者（可选依赖 roost[postgres]；惰性导出）
+    "PostgresStateStore",
     "InProcessTurnDelivery",
     "TurnProcessor",
     # M2 控制协议（host 侧；driver 内部名不进顶层导出）

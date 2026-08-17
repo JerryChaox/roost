@@ -1,12 +1,17 @@
 """测试夹具。
 
-`state_store` 夹具在「实现工厂表」上参数化：契约套件因此对任意 StateStore 实现复用，
-未来的 Postgres 实现只需往 STATE_STORE_FACTORIES 里加一项，全部契约用例自动覆盖它。
+`state_store` 夹具在「实现工厂表」上参数化：契约套件因此对任意 StateStore 实现复用。
+现有两项——SQLite 内存库与 Postgres（M11）。Postgres 实例用 docker 容器现起，容器带
+`roost.sandbox=1` label 沿用清理纪律，夹具兜底 `docker rm -f`；本机无 docker 或未装
+`roost[postgres]` 时该参数化 skip（附录 L）。
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import importlib.util
+import subprocess
+import time as _time
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -28,10 +33,128 @@ class FakeClock:
         self._now += seconds
 
 
-# session_id -> StateStore 实现工厂。新增实现只需在此登记。
-STATE_STORE_FACTORIES: dict[str, Callable[[FakeClock], Any]] = {
-    "sqlite-memory": lambda clock: SQLiteStateStore(None, now=clock),
-}
+PG_IMAGE = "postgres:16-alpine"
+PG_LABEL = "roost.sandbox=1"
+PG_PASSWORD = "roost"
+PG_DB = "roost_test"
+PG_READY_TIMEOUT = 60.0
+
+
+def _docker_available() -> bool:
+    try:
+        done = subprocess.run(
+            ["docker", "version", "--format", "{{.Server.Version}}"],
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
+
+def _asyncpg_available() -> bool:
+    return importlib.util.find_spec("asyncpg") is not None
+
+
+@pytest.fixture(scope="session")
+def postgres_dsn() -> Any:
+    """现起一个 PG 容器供整个测试会话复用；无 docker / 无 asyncpg 则 skip。"""
+    if not _asyncpg_available():
+        pytest.skip("asyncpg 未安装（extra roost[postgres]）")
+    if not _docker_available():
+        pytest.skip("docker daemon unavailable")
+
+    name = f"roost-pg-{uuid.uuid4().hex[:8]}"
+    started = subprocess.run(
+        [
+            "docker", "run", "-d", "--name", name,
+            "--label", PG_LABEL,
+            "-e", f"POSTGRES_PASSWORD={PG_PASSWORD}",
+            "-e", f"POSTGRES_DB={PG_DB}",
+            "-p", "127.0.0.1::5432",
+            PG_IMAGE,
+            # 测试库不需要崩溃安全，关掉刷盘让建表/清表快一个数量级。
+            "-c", "fsync=off", "-c", "full_page_writes=off",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if started.returncode != 0:
+        pytest.skip(f"PG 容器启动失败：{started.stderr.strip()}")
+
+    try:
+        port = _published_port(name)
+        _wait_until_ready(name)
+        yield f"postgresql://postgres:{PG_PASSWORD}@127.0.0.1:{port}/{PG_DB}"
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=120)
+
+
+def _published_port(container: str) -> str:
+    done = subprocess.run(
+        ["docker", "port", container, "5432/tcp"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if done.returncode != 0 or not done.stdout.strip():
+        pytest.skip(f"读不到 PG 容器映射端口：{done.stderr.strip()}")
+    return done.stdout.strip().splitlines()[0].rsplit(":", 1)[1]
+
+
+def _wait_until_ready(container: str) -> None:
+    """等到 PG 真的在 **TCP** 上接受连接。
+
+    刻意不用 `pg_isready`（unix socket）：postgres 镜像的 initdb 阶段会先起一个
+    只监听 unix socket 的临时服务，pg_isready 那时就已经返回 ready，而宿主侧的
+    TCP 连接还会被拒——按它判定会拿到间歇性的连接失败。这里用容器内经 TCP 的
+    psql 探测，那才是宿主将要走的同一条路。
+    """
+    deadline = _time.monotonic() + PG_READY_TIMEOUT
+    last = ""
+    while _time.monotonic() < deadline:
+        done = subprocess.run(
+            [
+                "docker", "exec", "-e", f"PGPASSWORD={PG_PASSWORD}", container,
+                "psql", "-h", "127.0.0.1", "-U", "postgres", "-d", PG_DB,
+                "-tAc", "SELECT 1",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if done.returncode == 0:
+            return
+        last = (done.stderr or done.stdout).strip()
+        _time.sleep(0.3)
+    pytest.skip(f"PG 容器在 {PG_READY_TIMEOUT}s 内未就绪：{last}")
+
+
+async def reset_postgres(dsn: str) -> None:
+    """清空 PG 侧状态（建表是 store 启动时幂等做的，这里只负责丢旧表）。"""
+    import asyncpg
+
+    conn = await asyncpg.connect(dsn)
+    try:
+        await conn.execute("DROP TABLE IF EXISTS roost_turns")
+        await conn.execute("DROP TABLE IF EXISTS roost_sessions")
+    finally:
+        await conn.close()
+
+
+async def make_postgres_store(dsn: str, clock: FakeClock) -> Any:
+    """建一个 PostgresStateStore 并把表建好（DDL 竞争留给测试自己决定顺序）。"""
+    from roost import PostgresStateStore
+
+    store = PostgresStateStore(dsn, now=clock)
+    # 第一次读操作会惰性建池并幂等建表；先跑一次，让后续并发路径不撞 DDL。
+    await store.has_active_turn("warmup")
+    return store
+
+
+# 参与契约套件的 StateStore 实现名。新增实现在此登记，全部契约用例自动覆盖它。
+STATE_STORE_IMPLEMENTATIONS = ("sqlite-memory", "postgres")
 
 
 @pytest.fixture
@@ -39,9 +162,14 @@ def clock() -> FakeClock:
     return FakeClock()
 
 
-@pytest.fixture(params=list(STATE_STORE_FACTORIES), ids=list(STATE_STORE_FACTORIES))
+@pytest.fixture(params=STATE_STORE_IMPLEMENTATIONS, ids=STATE_STORE_IMPLEMENTATIONS)
 async def state_store(request: pytest.FixtureRequest, clock: FakeClock):
-    store = STATE_STORE_FACTORIES[request.param](clock)
+    if request.param == "postgres":
+        dsn = request.getfixturevalue("postgres_dsn")
+        await reset_postgres(dsn)
+        store = await make_postgres_store(dsn, clock)
+    else:
+        store = SQLiteStateStore(None, now=clock)
     try:
         yield store
     finally:
