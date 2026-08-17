@@ -43,8 +43,10 @@ from .ports import (
     StateStore,
     TurnDelivery,
 )
+from .install import DriverInstaller
 from .pipeline import TurnProcessor
 from .protocol import (
+    DEFAULT_CONTROL_PORT,
     ENV_PREFIX,
     HEADER_PREFIX,
     HEADER_PROTOCOL_VERSION,
@@ -52,6 +54,23 @@ from .protocol import (
     PROTOCOL_VERSION,
     TURN_ENDPOINT,
     UPDATE_ENDPOINT,
+)
+from .reducer import (
+    KIND_LIFECYCLE_NOTICE,
+    KIND_TERMINAL,
+    KIND_TEXT,
+    KIND_TOOL,
+    LIFECYCLE_SEQ_RESERVED,
+    driver_display_seq,
+    reduce_event,
+    reduce_events,
+)
+from .runner import SandboxTurnRunner, TurnFailedError, TurnStreamTimeoutError
+from .sessions import (
+    BindingConflictError,
+    BootError,
+    BootTimeoutError,
+    SessionSandboxRegistry,
 )
 from .snapshot import FileSnapshotStore, S3Error, S3SnapshotStore
 from .store import SQLiteStateStore
@@ -110,6 +129,23 @@ __all__ = [
     "TurnSubmission",
     "EventPage",
     "HealthStatus",
+    # M3b 编排（cold boot / reducer / turn runner）
+    "DriverInstaller",
+    "SessionSandboxRegistry",
+    "BootError",
+    "BootTimeoutError",
+    "BindingConflictError",
+    "SandboxTurnRunner",
+    "TurnFailedError",
+    "TurnStreamTimeoutError",
+    "reduce_event",
+    "reduce_events",
+    "driver_display_seq",
+    "KIND_TEXT",
+    "KIND_TOOL",
+    "KIND_LIFECYCLE_NOTICE",
+    "KIND_TERMINAL",
+    "LIFECYCLE_SEQ_RESERVED",
     # protocol
     "PROTOCOL_VERSION",
     "HEADER_PREFIX",
@@ -118,4 +154,5 @@ __all__ = [
     "TURN_ENDPOINT",
     "HEALTH_ENDPOINT",
     "UPDATE_ENDPOINT",
+    "DEFAULT_CONTROL_PORT",
 ]

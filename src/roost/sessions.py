@@ -1,0 +1,303 @@
+"""SessionSandboxRegistry —— session 到沙箱的绑定与 cold boot 编排。
+
+契约见 CONTRACTS.md《附录 F — 交付模块》。本模块承担一类职责：**保证"这个
+session 现在有一个活着的、装好 driver 的沙箱"**，并把绑定这一事实写回 StateStore。
+它不解释 turn、不碰事件流（除了 boot 期的 lifecycle 通告），turn 的收发在 runner.py。
+
+三条语义要点：
+
+- **活性判定只认 `/v1/health`**：有绑定时 `backend.connect` 成功不等于沙箱可用
+  （容器可能还在、driver 却已死；附录 E 也明确 connect 对 exited 容器原样返回
+  handle）。因此复用路径一律短超时探一次 health，探不通就当死沙箱走 cold boot。
+  同理 cold boot 的就绪信号是轮询 health，**不看启动命令的输出或日志**。
+- **绝不留未绑定的活容器**：cold boot 中途失败（上传失败、启动失败、就绪超时、
+  换绑 CAS 失败）一律 kill 半成品，再把异常抛给调用方。孤儿容器是最贵的一类
+  资源泄漏——它不在任何 source of truth 里，没人会来回收。
+- **换绑走 CAS**：`swap_binding(old, new)`，old 为读到的旧绑定（无绑定时 None，
+  附录 A 预留的"行不存在"分支自此可达）。CAS 失败说明有别的执行者已经换过绑，
+  本次 boot 出来的沙箱作废——绝不覆盖别人的绑定。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from datetime import datetime, timezone
+
+from .control import ControlClient, ControlError
+from .events import LifecycleNotice
+from .install import DriverInstaller
+from .ports import EventSink, OpsRecorder, SandboxBackend, SessionContextProvider, StateStore
+from .reducer import reduce_event
+from .types import RuntimeStamp, SandboxHandle, SessionBootContext
+
+__all__ = [
+    "SessionSandboxRegistry",
+    "BootError",
+    "BootTimeoutError",
+    "BindingConflictError",
+    "DEFAULT_BOOT_TIMEOUT",
+    "SEQ_BOOT_STARTED",
+    "SEQ_BOOT_FINISHED",
+]
+
+DEFAULT_BOOT_TIMEOUT = 30.0
+
+# boot 通告在 display 流保留段里的固定位置（reducer.LIFECYCLE_SEQ_RESERVED）。
+SEQ_BOOT_STARTED = 1
+SEQ_BOOT_FINISHED = 2
+
+KIND_BOOT_STARTED = "boot_started"
+KIND_BOOT_FINISHED = "boot_finished"
+
+
+class BootError(RuntimeError):
+    """cold boot 失败；半成品沙箱已被清理。"""
+
+
+class BootTimeoutError(BootError, TimeoutError):
+    """沙箱在 boot_timeout 内没有报告健康。"""
+
+
+class BindingConflictError(RuntimeError):
+    """换绑 CAS 失败：别的执行者已经把 session 绑到了另一个沙箱。"""
+
+
+class SessionSandboxRegistry:
+    """按 session 取得（必要时新建）一个装好 driver 的沙箱。
+
+    参数：
+        backend:            SandboxBackend port 实现。
+        store:              StateStore port 实现（绑定的 source of truth）。
+        installer:          driver 源码与启动命令的产出方。
+        context_provider:   宿主的 cold boot 注入物来源（可选）。
+        sink:               boot lifecycle 通告的去处（可选）。
+        ops:                fire-and-forget 观测（可选）。
+        template:           create 时使用的模板/镜像（None = backend 默认）。
+        boot_timeout:       cold boot 到 health 就绪的总时限（秒）。
+        health_timeout:     单次 health 探测的超时（秒）——复用路径要"快速失败"。
+        poll_interval:      boot 期 health 轮询间隔（秒）。
+        request_timeout:    turn 流量用的 ControlClient 请求超时（秒）。
+        exec_timeout:       启动命令的 exec 超时（秒）。
+    """
+
+    def __init__(
+        self,
+        backend: SandboxBackend,
+        store: StateStore,
+        *,
+        installer: DriverInstaller | None = None,
+        context_provider: SessionContextProvider | None = None,
+        sink: EventSink | None = None,
+        ops: OpsRecorder | None = None,
+        template: str | None = None,
+        boot_timeout: float = DEFAULT_BOOT_TIMEOUT,
+        health_timeout: float = 2.0,
+        poll_interval: float = 0.25,
+        request_timeout: float = 10.0,
+        exec_timeout: float = 60.0,
+    ) -> None:
+        if boot_timeout <= 0:
+            raise ValueError("boot_timeout 必须 > 0")
+        if poll_interval <= 0:
+            raise ValueError("poll_interval 必须 > 0")
+        self._backend = backend
+        self._store = store
+        self._installer = installer if installer is not None else DriverInstaller()
+        self._context_provider = context_provider
+        self._sink = sink
+        self._ops = ops
+        self._template = template
+        self._boot_timeout = boot_timeout
+        self._health_timeout = health_timeout
+        self._poll_interval = poll_interval
+        self._request_timeout = request_timeout
+        self._exec_timeout = exec_timeout
+
+    # -- 入口 -----------------------------------------------------------
+
+    async def get_or_create(
+        self, session_id: str, *, turn_id: str = ""
+    ) -> tuple[SandboxHandle, ControlClient]:
+        """返回该 session 当前可用的沙箱与其控制客户端。
+
+        `turn_id` 只用于给 boot lifecycle 通告归属一个 turn（display 流按 turn 组织）。
+        """
+        binding = await self._store.get_binding(session_id)
+        if binding is not None:
+            client = await self._revive(binding)
+            if client is not None:
+                self._record("sandbox_reused", session_id=session_id,
+                             sandbox_id=binding.sandbox_id)
+                return binding, client
+            self._record("sandbox_dead", session_id=session_id,
+                         sandbox_id=binding.sandbox_id)
+
+        handle, client = await self._cold_boot(session_id, turn_id=turn_id)
+        swapped = await self._store.swap_binding(
+            session_id, binding, handle, self._stamp()
+        )
+        if not swapped:
+            await self._kill_quietly(handle)
+            raise BindingConflictError(
+                f"session {session_id!r} 的绑定在 cold boot 期间被他人改写"
+            )
+        self._record("sandbox_bound", session_id=session_id,
+                     sandbox_id=handle.sandbox_id)
+        return handle, client
+
+    # -- 复用路径 -------------------------------------------------------
+
+    async def _revive(self, binding: SandboxHandle) -> ControlClient | None:
+        """连接既有沙箱并探一次 health；不可用返回 None（交由调用方 cold boot）。"""
+        try:
+            handle = await self._backend.connect(binding.sandbox_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return None
+
+        probe = self._client(handle, timeout=self._health_timeout)
+        try:
+            status = await probe.health()
+        except asyncio.CancelledError:
+            raise
+        except (ControlError, OSError, ValueError):
+            return None
+        if not status.ok:
+            return None
+        return self._client(handle)
+
+    # -- cold boot ------------------------------------------------------
+
+    async def _cold_boot(
+        self, session_id: str, *, turn_id: str
+    ) -> tuple[SandboxHandle, ControlClient]:
+        started = time.monotonic()
+        await self._notify(session_id, turn_id, KIND_BOOT_STARTED, 0, SEQ_BOOT_STARTED)
+        self._record("sandbox_boot_started", session_id=session_id)
+
+        # 只向宿主索取一次注入物：cold_boot_context 可能是有代价的调用，
+        # 而 files/skills（走 upload）与 env（走 exec）必须来自同一份快照。
+        context = (
+            await self._context_provider.cold_boot_context(session_id)
+            if self._context_provider is not None
+            else None
+        )
+
+        handle = await self._backend.create(template=self._template)
+        try:
+            await self._backend.upload(handle, self._boot_files(context))
+            await self._start_driver(handle, dict(context.env) if context else {})
+            client = self._client(handle)
+            await self._await_ready(handle, started)
+        except asyncio.CancelledError:
+            await self._kill_quietly(handle)
+            raise
+        except BaseException as exc:
+            await self._kill_quietly(handle)
+            self._record("sandbox_boot_failed", session_id=session_id,
+                         sandbox_id=handle.sandbox_id, error=repr(exc))
+            raise
+
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        await self._notify(
+            session_id, turn_id, KIND_BOOT_FINISHED, elapsed_ms, SEQ_BOOT_FINISHED
+        )
+        self._record("sandbox_boot_finished", session_id=session_id,
+                     sandbox_id=handle.sandbox_id, elapsed_ms=elapsed_ms)
+        return handle, client
+
+    def _boot_files(self, context: SessionBootContext | None) -> dict[str, bytes]:
+        """driver 源码 + 宿主注入物，合成同一次 upload（附录 F）。"""
+        files = self._installer.files
+        if context is not None:
+            files.update(context.files)
+            files.update(context.skills)
+        return files
+
+    async def _start_driver(
+        self, handle: SandboxHandle, env: dict[str, str]
+    ) -> None:
+        returncode, stdout, stderr = await self._backend.exec(
+            handle,
+            self._installer.start_command(),
+            env=env or None,
+            timeout_seconds=self._exec_timeout,
+        )
+        if returncode != 0:
+            raise BootError(
+                f"driver 启动命令退出码 {returncode}: {stderr.strip() or stdout.strip()}"
+            )
+
+    async def _await_ready(self, handle: SandboxHandle, started: float) -> None:
+        """轮询 `/v1/health` 直到就绪或超出 boot_timeout。
+
+        探测失败（连接被拒、超时、非 200）都只是"还没起来"，一律重试到时限；
+        唯一的终止条件是就绪或超时——启动是异步的，任何单次失败都不足以定论。
+        """
+        probe = self._client(handle, timeout=self._health_timeout)
+        last: BaseException | None = None
+        while time.monotonic() - started < self._boot_timeout:
+            try:
+                status = await probe.health()
+            except asyncio.CancelledError:
+                raise
+            except (ControlError, OSError, ValueError) as exc:
+                last = exc
+            else:
+                if status.ok:
+                    return
+                last = None
+            await asyncio.sleep(self._poll_interval)
+        raise BootTimeoutError(
+            f"沙箱 {handle.sandbox_id!r} 在 {self._boot_timeout}s 内未就绪"
+            + (f"（最后一次探测：{last!r}）" if last is not None else "")
+        )
+
+    # -- 辅助 -----------------------------------------------------------
+
+    def _client(
+        self, handle: SandboxHandle, *, timeout: float | None = None
+    ) -> ControlClient:
+        return ControlClient(
+            self._backend,
+            handle,
+            request_timeout=self._request_timeout if timeout is None else timeout,
+        )
+
+    def _stamp(self) -> RuntimeStamp:
+        # runtime_files_hash 留 None：fingerprint 与比对语义归 M6 forced update，
+        # 在那之前"豁免比对"正是契约给 None 的含义（types.py）。
+        return RuntimeStamp(
+            bound_at=datetime.now(timezone.utc),
+            template_id=self._template,
+            runtime_files_hash=None,
+        )
+
+    async def _kill_quietly(self, handle: SandboxHandle) -> None:
+        """清理半成品沙箱；清理失败不得盖掉真正的失败原因。"""
+        try:
+            await self._backend.kill(handle)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._record("sandbox_kill_failed", sandbox_id=handle.sandbox_id)
+
+    async def _notify(
+        self, session_id: str, turn_id: str, kind: str, elapsed_ms: int, seq: int
+    ) -> None:
+        if self._sink is None:
+            return
+        notice = LifecycleNotice(
+            turn_id=turn_id, kind=kind, elapsed_ms=elapsed_ms, seq=seq
+        )
+        await self._sink.emit([reduce_event(notice, session_id=session_id)])
+
+    def _record(self, event_type: str, **details: object) -> None:
+        if self._ops is None:
+            return
+        try:
+            self._ops.record(event_type, **details)
+        except Exception:  # OpsRecorder 契约：绝不 raise——真炸了也不许影响主路径
+            pass

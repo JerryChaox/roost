@@ -1,7 +1,13 @@
 """`python -m roost.driver` —— 沙箱内 driver 进程入口。
 
 契约见 CONTRACTS.md《附录 B — M2 交付模块》：端口经 `ROOST_DRIVER_PORT`（默认 8787），
-绑定 127.0.0.1（控制面只在 loopback 上，不对沙箱外暴露）。
+**默认**绑定 127.0.0.1（控制面只在 loopback 上，不对沙箱外暴露）。
+
+绑定地址可经 `ROOST_DRIVER_HOST` 覆盖，默认不变。这个开关是 M3b 集成时被迫加的：
+docker 的端口发布把宿主端口转发到**容器网卡**，只监听容器内 loopback 的服务因此
+从宿主完全不可达（附录 F 的启动命令里据此设 0.0.0.0）。暴露面并没有因此变宽——
+沙箱边界仍在，backend 只把端口发布到宿主的 127.0.0.1。E2B 一类自带代理的 backend
+维持默认的 loopback 绑定即可。
 
 M2 的 harness 是 `EchoHarness`；真实 Claude Agent SDK harness 归 M3，届时只换
 这里注入的实现，server/worker/registry 无需改动。
@@ -18,21 +24,22 @@ import os
 import signal
 import sys
 
-from ..protocol import ENV_PREFIX
+from ..protocol import DEFAULT_CONTROL_PORT, ENV_PREFIX
 from .harness import EchoHarness
 from .server import ControlServer
 
 __all__ = ["main"]
 
 ENV_PORT = f"{ENV_PREFIX}DRIVER_PORT"
-DEFAULT_PORT = 8787
+ENV_HOST = f"{ENV_PREFIX}DRIVER_HOST"
+DEFAULT_PORT = DEFAULT_CONTROL_PORT
 HOST = "127.0.0.1"
 
 
-async def _serve(port: int) -> None:
-    server = ControlServer(EchoHarness(), host=HOST, port=port)
+async def _serve(port: int, host: str) -> None:
+    server = ControlServer(EchoHarness(), host=host, port=port)
     await server.start()
-    print(f"roost-driver listening on {HOST}:{server.port}", flush=True)
+    print(f"roost-driver listening on {host}:{server.port}", flush=True)
 
     loop = asyncio.get_running_loop()
     stopping = asyncio.Event()
@@ -69,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{ENV_PORT} 必须是整数", file=sys.stderr, flush=True)
         return 2
     try:
-        asyncio.run(_serve(port))
+        asyncio.run(_serve(port, os.environ.get(ENV_HOST, HOST)))
     except KeyboardInterrupt:
         return 0
     return 0

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from ..protocol import DEFAULT_CONTROL_PORT
 from ..types import SandboxHandle
 from .archive import build_tar
 from .cli import DockerCli
@@ -25,8 +26,8 @@ __all__ = [
 
 BACKEND_NAME = "docker"
 DEFAULT_IMAGE = "python:3.12-slim"
-# driver 默认控制端口；统一常量位置留 M3 集成时处理（附录 D）。
-DEFAULT_CONTROL_PORT = 8787
+# 控制端口的唯一定义在 `roost.protocol`（附录 F 的常量统一）；此处只把同一个名字
+# 转出，既有导入路径 `roost.backends.DEFAULT_CONTROL_PORT` 保持可用。
 SANDBOX_LABEL_KEY = "roost.sandbox"
 SANDBOX_LABEL_VALUE = "1"
 SANDBOX_LABEL = f"{SANDBOX_LABEL_KEY}={SANDBOX_LABEL_VALUE}"

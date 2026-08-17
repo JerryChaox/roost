@@ -409,3 +409,18 @@ Claude Agent SDK harness 拆为 M3c（M8 前完成）；快照恢复/备份不�
   自动 cold boot 新沙箱且 swap_binding 生效。
 - reducer 纯函数单测。boot 超时路径：注入永不就绪的假 backend → raise 且 kill
   被调用。
+
+## 附录 F 增补：M3b 落地裁定（2026-08-17）
+
+- **driver 绑定地址**：附录 B"绑定 127.0.0.1"修订为——driver 默认绑定
+  127.0.0.1，可经 `ROOST_DRIVER_HOST` 覆盖；容器类 backend 的端口发布只达容器
+  网卡，故 DriverInstaller 默认传 `ROOST_DRIVER_HOST=0.0.0.0`，对外暴露仍由
+  backend 的宿主回环端口发布约束（E2B 类 backend 传回 127.0.0.1）。附录 F 的
+  启动命令字符串按此修订。
+- **display seq 保留段**：display 流的 seq 1..16（`LIFECYCLE_SEQ_RESERVED`）
+  保留给库产 lifecycle notice（boot_started=1、boot_finished=2，M6 update 用
+  后续位），driver 事件经 `driver_display_seq` 偏移到保留段之后——无状态、
+  重复 cursor 读幂等，"同一 turn 内 seq 递增"承诺保持；seq 有空洞属预期。
+- 其余采纳：get_or_create 增 kw-only `turn_id=""`（notice 挂靠）；DriverInstaller
+  整包收集 roost 源码（全 stdlib，不会烂）；`RuntimeStamp.runtime_files_hash`
+  维持 None 至 M6 fingerprint；swap CAS 失败 kill 新沙箱并 raise。
