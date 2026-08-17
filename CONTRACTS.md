@@ -346,3 +346,19 @@ class Harness(Protocol):
   隐含恢复、fixture 兜底 rm -f 不留容器。
 - 边界：不改 `src/roost/__init__.py`（导出在集成时统一加）、不碰 control/ 与
   driver/（M2 写入集）。附录 C 同样受此边界约束。
+
+## 附录 E：集成裁定记录（2026-08-17，M2/M3a/M4 落地时）
+
+- 附录 B 增补（M2 实现裁定采纳）：`POST /v1/turn` 响应含第三字段
+  `turn_state`（"queued"|"running"|"done"）；缺失协议版本 header 视为不识别
+  → 400；错误码表（invalid_body / invalid_query / unknown_turn / not_found /
+  method_not_allowed）归 PROTOCOL.md §6 所有；worker 对"harness 正常返回但未
+  emit Terminal"同样兜底 Terminal(status='error')——"Terminal 恒为最后一条"是
+  driver 不变量；driver 增设 httpd.py 承载 HTTP wire（server.py 仅路由与编解码）。
+- 附录 C 增补（M4 实现裁定采纳）：`prefix` 是字面前缀（目录语义自带 '/'）；
+  `timeout_seconds=30.0` kw-only 参数；`region` 默认 "us-east-1"、`endpoint_url`
+  默认 AWS 区域端点。`x-amz-security-token` 与 port 面的 delete/exists 明确
+  deferred——等 backup coordinator 真需要时经契约扩。
+- 附录 D 增补（M3a 实现裁定，均留 M3 集成处理）：exec 无 detach 参数，detached
+  以 `sh -c "nohup … &"` 调用方约定表达；connect 对 exited 容器原样返回 handle，
+  活性判定归 registry 的 health 探测；DEFAULT_CONTROL_PORT 双处常量待统一。
