@@ -34,3 +34,4 @@ htmlcov/
 
 # local secrets
 .env
+.roost-snapshots/
