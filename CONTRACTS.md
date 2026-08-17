@@ -645,3 +645,18 @@ hang 的定义：turn 已提交、driver 事件流在 `stall_timeout` 内颗粒�
 - **测试**：harness 单元层用 fake SDK 客户端测事件映射与会话续接参数；真 LLM
   e2e 门控 `ROOST_CLAUDE_E2E=1` + `ANTHROPIC_API_KEY`（默认 skip，key 到位后
   作为 M3c 验收跑通：真 agent 在 Docker 镜像里回答 + /kill 后记忆延续）。
+
+## 附录 K 增补：M3c 落地裁定（2026-08-17）
+
+- claude-agent-sdk（0.2.139）wheel 自带原生 Claude Code 二进制（2.1.233），
+  镜像无需 Node/npm；跨目录会话 resume 依赖 bundled CLI ≥ 2.1.223（root 与
+  E2B 的 workspace 绝对路径不同，记忆跨用户迁移靠它），已写模块 docstring。
+- 会话连续性：turn = 一次 query()，resume id 存 `<workspace>/.roost/claude-session`，
+  `CLAUDE_CONFIG_DIR` 指向 `<workspace>/.claude`——transcript 随 M4 快照走。
+  刻意不用 continue_conversation。
+- Delta 粒度 = 每个 assistant TextBlock 一条（不开 token 级 partial stream，
+  宿主有需求再立项）。
+- permission_mode 默认 bypassPermissions（沙箱即权限边界），
+  `ROOST_CLAUDE_PERMISSION_MODE` 可覆盖。
+- 真 LLM e2e 门控 ROOST_CLAUDE_E2E=1 + ANTHROPIC_API_KEY，key 到位后作为
+  M3c 验收（真 agent 对话 + /kill 后记忆延续）。

@@ -15,8 +15,11 @@ root 下是 /root/workspace，E2B 一类非 root 沙箱下是 /home/user/workspa
 `/v1/workspace` 备份/恢复的对象（附录 G）。创建失败只告警不退出：driver 的职责是
 接 turn，"这台机器不给建目录"不该让协议面整个起不来。
 
-M2 的 harness 是 `EchoHarness`；真实 Claude Agent SDK harness 归 M3，届时只换
-这里注入的实现，server/worker/registry 无需改动。
+harness 经 `ROOST_HARNESS`（`module:attr` 工厂）选择，缺省
+`roost.driver.harness:EchoHarness`；真实 Claude Agent SDK harness 是
+`roost.harness_claude:ClaudeHarness`（附录 K）。工厂在绑定端口**之前**执行，
+导入或实例化失败 → 进程退出码 3，宿主按 boot 失败处理；server/worker/registry
+对换了哪个 harness 一无所知。
 
 就绪信号：绑定成功后向 stdout 打印一行
 `roost-driver listening on <host>:<port>` 并 flush。端口传 0 时由内核分配，这一行
@@ -31,7 +34,7 @@ import signal
 import sys
 
 from ..protocol import DEFAULT_CONTROL_PORT, ENV_PREFIX
-from .harness import EchoHarness
+from .harness import HarnessLoadError, harness_from_env
 from .server import ControlServer
 from .workspace import ensure_workspace_dir, workspace_dir_from_env
 
@@ -43,7 +46,7 @@ DEFAULT_PORT = DEFAULT_CONTROL_PORT
 HOST = "127.0.0.1"
 
 
-async def _serve(port: int, host: str) -> None:
+async def _serve(port: int, host: str, harness) -> None:
     workspace = workspace_dir_from_env()
     workspace_warning: str | None = None
     try:
@@ -54,7 +57,7 @@ async def _serve(port: int, host: str) -> None:
         # 机器（比如只读根的开发机）连协议面都起不来。
         workspace_warning = f"warning: 无法创建工作区目录 {workspace}：{exc!r}"
 
-    server = ControlServer(EchoHarness(), host=host, port=port, workspace_dir=workspace)
+    server = ControlServer(harness, host=host, port=port, workspace_dir=workspace)
     await server.start()
     print(f"roost-driver listening on {host}:{server.port}", flush=True)
     # 告警压在就绪行之后：**输出的第一行是就绪行**是协议承诺（PROTOCOL.md §5），
@@ -96,8 +99,15 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError:
         print(f"{ENV_PORT} 必须是整数", file=sys.stderr, flush=True)
         return 2
+    # harness 在**绑定端口之前**造好：造不出来就根本不该有一个能接 turn 的
+    # 控制面（附录 K：不可导入/实例化失败 → driver 启动失败）。
     try:
-        asyncio.run(_serve(port, os.environ.get(ENV_HOST, HOST)))
+        harness = harness_from_env()
+    except HarnessLoadError as exc:
+        print(f"harness 加载失败：{exc}", file=sys.stderr, flush=True)
+        return 3
+    try:
+        asyncio.run(_serve(port, os.environ.get(ENV_HOST, HOST), harness))
     except KeyboardInterrupt:
         return 0
     return 0

@@ -15,6 +15,7 @@ emit 是同步回调而非 await：事件写入是纯内存操作（emit.py）�
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import os
 from collections.abc import Callable
@@ -22,12 +23,65 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ..events import Delta, DriverEvent, Terminal
+from ..protocol import ENV_PREFIX
 from ..types import TurnEnvelope
 from .workspace import workspace_dir_from_env
 
-__all__ = ["Harness", "EchoHarness", "COUNTER_FILE"]
+__all__ = [
+    "Harness",
+    "EchoHarness",
+    "COUNTER_FILE",
+    "load_harness",
+    "harness_from_env",
+    "HarnessLoadError",
+    "ENV_HARNESS",
+    "DEFAULT_HARNESS",
+]
 
 COUNTER_FILE = "counter"
+
+#: driver 启动读它选 harness，形如 `module:attr`（附录 K）。
+ENV_HARNESS = f"{ENV_PREFIX}HARNESS"
+DEFAULT_HARNESS = "roost.driver.harness:EchoHarness"
+
+
+class HarnessLoadError(RuntimeError):
+    """`ROOST_HARNESS` 指向的东西导不进来或造不出来。
+
+    driver 启动因此失败（宿主按 boot 失败处理）——一个"harness 没接上"的
+    driver 还能应答 /v1/turn 才是更坏的结果：turn 会被接受、然后无声地全部
+    走进兜底错误，看起来像模型在失败。
+    """
+
+
+def load_harness(spec: str) -> Harness:
+    """`module:attr` → harness 实例（`attr` 无参可调用即可：类或工厂函数）。
+
+    刻意不接受构造参数：沙箱里的配置面只有环境变量，harness 自己去读它需要的
+    那几个（例如 ClaudeHarness 的 ROOST_CLAUDE_*）。把参数编进 spec 会让
+    driver 变成一个小型配置语言的解释器。
+    """
+    module_name, separator, attribute = spec.partition(":")
+    if not separator or not module_name or not attribute:
+        raise HarnessLoadError(f"{ENV_HARNESS} 必须形如 'module:attr'，收到 {spec!r}")
+    try:
+        module = importlib.import_module(module_name)
+    except Exception as exc:  # noqa: BLE001 —— 导入期的任何失败都是启动失败
+        raise HarnessLoadError(f"导入 {module_name!r} 失败：{exc!r}") from exc
+    try:
+        factory = getattr(module, attribute)
+    except AttributeError as exc:
+        raise HarnessLoadError(f"{module_name!r} 里没有 {attribute!r}") from exc
+    try:
+        return factory()
+    except Exception as exc:  # noqa: BLE001 —— 实例化失败同样是启动失败
+        raise HarnessLoadError(f"实例化 {spec!r} 失败：{exc!r}") from exc
+
+
+def harness_from_env(env: dict[str, str] | None = None) -> Harness:
+    """按 `ROOST_HARNESS` 造 harness，缺省仍是 EchoHarness。"""
+    source = os.environ if env is None else env
+    return load_harness(source.get(ENV_HARNESS) or DEFAULT_HARNESS)
 
 
 class Harness(Protocol):

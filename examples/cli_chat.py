@@ -23,8 +23,12 @@ agent 仍然只答一次。
 
     .venv/bin/python examples/cli_chat.py --counter --snapshot-dir /tmp/roost-snap
 
-M3b 的沙箱里跑的是 EchoHarness（回显 payload），所以 Demo 1 验的是投递与执行的
-语义，与 LLM 无关；真实 Claude Agent SDK harness 归 M3c。
+三个 demo 默认跑 EchoHarness（回显 payload），验的是投递与执行的语义，与 LLM 无关。
+`--harness claude` 换成真实的 Claude Agent SDK harness（M3c）——它要求一个预装了
+SDK 的镜像，并把本机的 ANTHROPIC_* 透传进沙箱 boot env：
+
+    docker build -t roost-claude examples/sandbox-images/claude/
+    .venv/bin/python examples/cli_chat.py --harness claude --image roost-claude
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import os
 import sys
 from pathlib import Path
 
@@ -51,6 +56,7 @@ from roost import (  # noqa: E402
     FileSnapshotStore,
     InProcessTurnDelivery,
     SandboxTurnRunner,
+    SessionBootContext,
     SessionSandboxRegistry,
     SQLiteStateStore,
     TurnEnvelope,
@@ -66,6 +72,44 @@ DEFAULT_SNAPSHOT_DIR = ".roost-snapshots"
 def snapshot_key(session_id: str) -> str:
     """SnapshotKeyFn：session → 存储 key。**宿主的决定**——库对 key 结构不作解释。"""
     return f"workspace/{session_id}.tar.gz"
+
+
+HARNESS_SPECS = {
+    "echo": "roost.driver.harness:EchoHarness",
+    "claude": "roost.harness_claude:ClaudeHarness",
+}
+#: 透传进沙箱的凭据环境变量（附录 K）。宿主只负责搬运，不解释、不打印。
+ANTHROPIC_ENV_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN")
+
+
+class BootEnvProvider:
+    """SessionContextProvider：cold boot 时把一份 env 交给库注入沙箱。
+
+    这是 **demo 装配**，真实宿主会在这里去 secret store 现取。库对内容不作解释，
+    也不会把它写进日志或快照——它只是 driver 启动命令前面的一串 `KEY=VALUE`。
+    """
+
+    def __init__(self, env: dict[str, str]) -> None:
+        self._env = dict(env)
+
+    async def cold_boot_context(self, session_id: str) -> SessionBootContext:
+        del session_id                       # demo 的注入物与 session 无关
+        return SessionBootContext(env=dict(self._env))
+
+
+def boot_env(args: argparse.Namespace) -> dict[str, str]:
+    """harness 选择 + 凭据 → 沙箱 boot env。
+
+    `ROOST_HARNESS` 走 env 而不是镜像默认值：同一个镜像可以既跑 echo 又跑
+    claude（既有测试与 demo 因此不受影响），而选择权留在宿主手上。
+    """
+    env = {"ROOST_HARNESS": HARNESS_SPECS[args.harness]}
+    if args.harness == "claude":
+        for name in ANTHROPIC_ENV_VARS:
+            value = os.environ.get(name)
+            if value:
+                env[name] = value           # 值不打印，也不写进任何持久状态
+    return env
 
 
 class ConsoleSink:
@@ -137,6 +181,21 @@ def build_backend(args: argparse.Namespace):
 
 
 async def chat(args: argparse.Namespace) -> int:
+    if args.harness == "claude" and not (args.image_given or args.template):
+        # 镜像归属是 M3c 的硬约束：SDK 与 Claude CLI 预装在镜像里，cold boot
+        # 不装包。默认的 python:3.12-slim 里没有它们，跑起来只会在 driver
+        # 启动时失败——不如在这里当场说清楚。
+        print(
+            "--harness claude 需要显式给出预装了 Claude Agent SDK 的镜像/模板："
+            "\n  docker build -t roost-claude examples/sandbox-images/claude/"
+            "\n  … --harness claude --image roost-claude",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 2
+    if args.harness == "claude" and not os.environ.get("ANTHROPIC_API_KEY"):
+        print("[warn] 本机没有 ANTHROPIC_API_KEY，沙箱里的 agent 会认证失败", flush=True)
+
     backend, template, installer = build_backend(args)
     store = SQLiteStateStore(args.db)
     sink = ConsoleSink()
@@ -150,6 +209,7 @@ async def chat(args: argparse.Namespace) -> int:
         snapshot_key=snapshot_key,
         template=template,
         installer=installer,
+        context_provider=BootEnvProvider(boot_env(args)),
         boot_timeout=args.boot_timeout,
     )
     runner = SandboxTurnRunner(
@@ -165,6 +225,7 @@ async def chat(args: argparse.Namespace) -> int:
 
     print(
         f"roost demo — session={args.session} backend={args.backend}"
+        f" harness={args.harness}"
         f" template={template or 'e2b-default'}"
         f" snapshots={args.snapshot_dir}"
         + ("  [每条消息双投]" if args.duplicate else "")
@@ -272,7 +333,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--backend", default="docker", choices=["docker", "e2b"],
         help="沙箱后端（e2b 需要可选依赖 roost[e2b] 与 ROOST_E2B_API_KEY）",
     )
-    parser.add_argument("--image", default=DEFAULT_IMAGE, help="沙箱镜像（--backend docker）")
+    parser.add_argument("--image", default=None, help="沙箱镜像（--backend docker）")
+    parser.add_argument(
+        "--harness", default="echo", choices=sorted(HARNESS_SPECS),
+        help="沙箱里跑哪个 harness（claude 需要预装 SDK 的镜像，见 "
+             "examples/sandbox-images/claude/）",
+    )
     parser.add_argument(
         "--template", default=None,
         help="E2B template id（--backend e2b；不给则用 E2B 默认 base 模板）",
@@ -311,7 +377,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--keep-sandbox", action="store_true", help="退出时保留容器（排障用）"
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    # `--image` 的默认值要既能兜底又能被"有没有显式给"区分开：claude harness
+    # 拒绝默认镜像（里面没有 SDK），echo harness 照旧用 python:3.12-slim。
+    args.image_given = args.image is not None
+    if args.image is None:
+        args.image = DEFAULT_IMAGE
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
