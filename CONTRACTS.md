@@ -660,3 +660,43 @@ hang 的定义：turn 已提交、driver 事件流在 `stall_timeout` 内颗粒�
   `ROOST_CLAUDE_PERMISSION_MODE` 可覆盖。
 - 真 LLM e2e 门控 ROOST_CLAUDE_E2E=1 + ANTHROPIC_API_KEY，key 到位后作为
   M3c 验收（真 agent 对话 + /kill 后记忆延续）。
+
+## 附录 L：M11 多消费者与 Postgres 契约（2026-08-17 钉定）
+
+### session 临界区（关闭附录 A 的 M1 串行化边界）
+
+- StateStore port 增一个方法（唯一的 port 面变更）：
+
+```python
+def session_critical(self, session_id: str) -> AsyncContextManager[None]:
+    """session 级互斥临界区：包住"串行门检查 + begin_turn"这段复合判定。
+    锁的持有时间 = 临界区本身（毫秒级），绝不覆盖 runner 执行期。"""
+```
+
+- `pipeline.py`：`_pass_serial_gate` + `begin_turn` 移入
+  `async with store.session_critical(turn.session_id)`。串行门通过后在临界区内
+  完成 begin_turn 才释放——同 session 两个不同 turn 并发消费时至多一个通过。
+- SQLite 实现：进程内 per-session asyncio.Lock（单进程假设不变，文档已注明）。
+- Postgres 实现：`pg_advisory_xact_lock(hashtext(session_id))` 级别的事务内
+  advisory lock（具体函数选型以 PG 文档核实），跨连接、跨实例生效。
+
+### PostgresStateStore
+
+- 可选依赖 extra `postgres`（驱动选型 asyncpg vs psycopg 以现行文档与
+  asyncio 契合度核实后定，回报理由）；`roost/store/postgres.py` 惰性 import，
+  未装 extra 实例化报清晰错误。核心零依赖不变。
+- 表结构 = 附录 A 两表（类型对齐 PG：TIMESTAMPTZ/DOUBLE PRECISION/JSONB 由
+  实现裁定并回报）；建表 DDL 由 store 启动幂等执行（IF NOT EXISTS）。
+- 语义逐字对齐附录 A + H 增补：单语句条件 UPDATE CAS、begin_turn 四情形、
+  sweep 单事务转 requeued + redelivery grace（PG 侧用 FOR UPDATE SKIP LOCKED
+  防并发 watchdog 重复认领——这是 PG 版对"单事务"要求的正确表达）。
+- **契约测试套件复用**：既有 state_store 契约套件参数化夹具直接跑 Postgres
+  实现——PG 实例用 docker 容器起（label roost.sandbox=1 沿用清理纪律），
+  无 docker 时 PG 参数化 skip。
+
+### 验收
+
+- 并发互斥测试：delivery concurrency=4、同 session 两个不同 turn 反复并发
+  投递，fake runner 记录执行区间，断言永不重叠（SQLite 与 PG 两个实现都过）。
+- 全部既有契约套件在 PostgresStateStore 上通过。
+- 搁浅自愈（附录 H 增补）在 PG 上同样成立。
