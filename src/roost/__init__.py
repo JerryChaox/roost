@@ -6,7 +6,13 @@ host 侧（wire 编解码与 ControlClient）。
 
 driver 子系统（`roost.driver`）是沙箱内实现，刻意不在顶层导出——宿主只经
 `roost.control` 与它对话。
+
+`E2BSandboxBackend` 是**惰性导出**（PEP 562 的模块级 `__getattr__`）：它依赖可选
+extra `roost[e2b]`，而核心必须零运行时依赖——没装 extra 的环境 `import roost`
+照常成功，只有真去取这个名字时才会 import 到 SDK（没装则报安装指引）。
 """
+
+from typing import TYPE_CHECKING, Any
 
 from .control import (
     ControlClient,
@@ -92,12 +98,33 @@ from .types import (
     TurnEnvelope,
 )
 
+if TYPE_CHECKING:  # 类型检查器要看得见真实符号，运行期仍然惰性
+    from .backends import E2BSandboxBackend
+
 __version__ = "0.0.1"
+
+_LAZY_BACKENDS = {"E2BSandboxBackend"}
+
+
+def __getattr__(name: str) -> Any:
+    """惰性解析可选依赖的导出（M7 的 E2BSandboxBackend）。"""
+    if name in _LAZY_BACKENDS:
+        from . import backends
+
+        return getattr(backends, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(__all__)
+
 
 __all__ = [
     "__version__",
     # backends (M3a) & snapshot stores (M4)
     "DockerSandboxBackend",
+    # backends (M7，可选依赖 roost[e2b]；惰性导出)
+    "E2BSandboxBackend",
     "FileSnapshotStore",
     "S3SnapshotStore",
     "S3Error",

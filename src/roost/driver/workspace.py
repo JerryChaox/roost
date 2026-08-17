@@ -43,7 +43,11 @@ __all__ = [
     "unpack_into",
 ]
 
-DEFAULT_WORKSPACE_DIR = "/workspace"
+# 默认落在**当前用户的家目录**下，而不是 `/`：沙箱不一定以 root 运行（E2B 的默认
+# 用户是 `user`），`/workspace` 在非 root 沙箱里建不出来（PermissionError 13），
+# 工作区备份/恢复会整条失败。`~` 在 driver 启动时 expanduser 解析——root 下是
+# /root/workspace，E2B 下是 /home/user/workspace。
+DEFAULT_WORKSPACE_DIR = "~/workspace"
 ENV_WORKSPACE_DIR = f"{ENV_PREFIX}WORKSPACE_DIR"
 
 
@@ -52,10 +56,14 @@ class UnsafeArchiveError(ValueError):
 
 
 def workspace_dir_from_env(env: dict[str, str] | None = None) -> Path:
-    """工作区目录：`ROOST_WORKSPACE_DIR`，缺省 `/workspace`。"""
+    """工作区目录：`ROOST_WORKSPACE_DIR`，缺省 `~/workspace`。
+
+    `~` 在这里解析（`expanduser`），显式覆盖值同样享受这个解析——宿主因此可以写
+    `ROOST_WORKSPACE_DIR=~/agent`，而不必知道沙箱以哪个用户跑。
+    """
     source = os.environ if env is None else env
     raw = source.get(ENV_WORKSPACE_DIR) or DEFAULT_WORKSPACE_DIR
-    return Path(raw)
+    return Path(raw).expanduser()
 
 
 def ensure_workspace_dir(path: Path) -> None:

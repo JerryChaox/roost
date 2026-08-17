@@ -9,7 +9,9 @@ docker 的端口发布把宿主端口转发到**容器网卡**，只监听容器
 沙箱边界仍在，backend 只把端口发布到宿主的 127.0.0.1。E2B 一类自带代理的 backend
 维持默认的 loopback 绑定即可。
 
-工作区目录经 `ROOST_WORKSPACE_DIR`（默认 `/workspace`），启动时确保存在——它是
+工作区目录经 `ROOST_WORKSPACE_DIR`（默认 `~/workspace`，启动时 expanduser 解析：
+root 下是 /root/workspace，E2B 一类非 root 沙箱下是 /home/user/workspace），启动时
+确保存在——它是
 `/v1/workspace` 备份/恢复的对象（附录 G）。创建失败只告警不退出：driver 的职责是
 接 turn，"这台机器不给建目录"不该让协议面整个起不来。
 

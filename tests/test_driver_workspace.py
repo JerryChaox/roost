@@ -147,8 +147,14 @@ def test_unpack_raises_tar_error_on_corrupt_archive(tmp_path: Path) -> None:
 
 
 def test_workspace_dir_from_env_defaults_and_overrides() -> None:
-    assert workspace_dir_from_env({}) == Path(DEFAULT_WORKSPACE_DIR)
+    """默认值必须是**家目录下**的绝对路径：非 root 沙箱建不出 `/workspace`。"""
+    default = workspace_dir_from_env({})
+    assert default == Path(DEFAULT_WORKSPACE_DIR).expanduser()
+    assert default.is_absolute() and "~" not in str(default)
+    assert default == Path.home() / "workspace"
     assert workspace_dir_from_env({ENV_WORKSPACE_DIR: "/tmp/ws"}) == Path("/tmp/ws")
+    # 显式覆盖值同样 expanduser——宿主不必知道沙箱以哪个用户跑。
+    assert workspace_dir_from_env({ENV_WORKSPACE_DIR: "~/agent"}) == Path.home() / "agent"
 
 
 # ---- EchoHarness 的 counter（Demo 2 的观测面） ------------------------------

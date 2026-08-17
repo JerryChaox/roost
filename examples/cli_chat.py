@@ -41,11 +41,13 @@ if __package__ in (None, ""):  # 直接 `python examples/cli_chat.py` 时也能�
 from roost import (  # noqa: E402
     KIND_LIFECYCLE_NOTICE,
     BackupCoordinator,
+    DriverInstaller,
     KIND_TERMINAL,
     KIND_TEXT,
     KIND_TOOL,
     DisplayEvent,
     DockerSandboxBackend,
+    SandboxBackend,
     FileSnapshotStore,
     InProcessTurnDelivery,
     SandboxTurnRunner,
@@ -116,8 +118,26 @@ def derive_turn_id(session_id: str, index: int, text: str) -> str:
     return f"turn-{digest[:32]}"
 
 
+def build_backend(args: argparse.Namespace):
+    """`--backend` → (backend, template, installer)。
+
+    两个 backend 的"模板"不是一回事：docker 版是镜像名，E2B 版是 template id
+    （不给就是 E2B 默认 base 模板）。driver 的监听地址也不同——E2B 的端口代理
+    可达沙箱内 loopback，所以那边把 driver 收到 127.0.0.1。
+    """
+    if args.backend == "e2b":
+        from roost import E2BSandboxBackend  # 可选依赖：只在选了这个 backend 时才 import
+        from roost.backends.e2b import DEFAULT_BIND_HOST
+
+        backend = E2BSandboxBackend(
+            template=args.template, sandbox_timeout=args.sandbox_timeout
+        )
+        return backend, args.template, DriverInstaller(bind_host=DEFAULT_BIND_HOST)
+    return DockerSandboxBackend(image=args.image), args.image, None
+
+
 async def chat(args: argparse.Namespace) -> int:
-    backend = DockerSandboxBackend(image=args.image)
+    backend, template, installer = build_backend(args)
     store = SQLiteStateStore(args.db)
     sink = ConsoleSink()
     snapshots = FileSnapshotStore(args.snapshot_dir)
@@ -128,7 +148,8 @@ async def chat(args: argparse.Namespace) -> int:
         sink=sink,
         snapshot_store=snapshots,
         snapshot_key=snapshot_key,
-        template=args.image,
+        template=template,
+        installer=installer,
         boot_timeout=args.boot_timeout,
     )
     runner = SandboxTurnRunner(
@@ -143,7 +164,8 @@ async def chat(args: argparse.Namespace) -> int:
     watchdog.start()
 
     print(
-        f"roost demo — session={args.session} backend=docker image={args.image}"
+        f"roost demo — session={args.session} backend={args.backend}"
+        f" template={template or 'e2b-default'}"
         f" snapshots={args.snapshot_dir}"
         + ("  [每条消息双投]" if args.duplicate else "")
         + ("  [counter]" if args.counter else ""),
@@ -193,7 +215,7 @@ async def chat(args: argparse.Namespace) -> int:
 
 
 async def _kill_sandbox(
-    backend: DockerSandboxBackend, store: SQLiteStateStore, session_id: str
+    backend: SandboxBackend, store: SQLiteStateStore, session_id: str
 ) -> None:
     """`/kill`：当场销毁当前沙箱（Demo 2 的"沙箱是一次性的"那一半）。
 
@@ -204,7 +226,7 @@ async def _kill_sandbox(
     if binding is None:
         print("[kill] 当前没有绑定的沙箱", flush=True)
         return
-    print(f"[kill] docker rm -f {binding.sandbox_id[:12]}", flush=True)
+    print(f"[kill] destroy sandbox {binding.sandbox_id[:12]}", flush=True)
     try:
         await backend.kill(binding)
     except Exception as exc:
@@ -229,11 +251,11 @@ def _lines(messages: list[str]):
 
 
 async def _cleanup(
-    backend: DockerSandboxBackend, store: SQLiteStateStore, args: argparse.Namespace
+    backend: SandboxBackend, store: SQLiteStateStore, args: argparse.Namespace
 ) -> None:
     binding = await store.get_binding(args.session)
     if binding is not None and not args.keep_sandbox:
-        print(f"[cleanup] docker rm -f {binding.sandbox_id[:12]}", flush=True)
+        print(f"[cleanup] destroy sandbox {binding.sandbox_id[:12]}", flush=True)
         try:
             await backend.kill(binding)
         except Exception as exc:  # 清理失败不该盖掉 demo 的输出
@@ -247,9 +269,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="roost CLI chat demo")
     parser.add_argument("--session", default=DEFAULT_SESSION, help="session id")
     parser.add_argument(
-        "--backend", default="docker", choices=["docker"], help="沙箱后端（M3b 仅 docker）"
+        "--backend", default="docker", choices=["docker", "e2b"],
+        help="沙箱后端（e2b 需要可选依赖 roost[e2b] 与 ROOST_E2B_API_KEY）",
     )
-    parser.add_argument("--image", default=DEFAULT_IMAGE, help="沙箱镜像")
+    parser.add_argument("--image", default=DEFAULT_IMAGE, help="沙箱镜像（--backend docker）")
+    parser.add_argument(
+        "--template", default=None,
+        help="E2B template id（--backend e2b；不给则用 E2B 默认 base 模板）",
+    )
+    parser.add_argument(
+        "--sandbox-timeout", type=int, default=None,
+        help="E2B 沙箱存活时限（秒；不给用 SDK 默认 300s）",
+    )
     parser.add_argument("--db", default=None, help="SQLite 文件路径（默认内存库）")
     parser.add_argument(
         "--duplicate", action="store_true", help="每条消息投递两次（Demo 1）"

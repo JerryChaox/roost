@@ -248,7 +248,9 @@ left implicit:
 
   This line is the only race-free way to learn the port when it was assigned
   dynamically. Callers that pinned the port may instead poll `/v1/health`.
-- `ROOST_WORKSPACE_DIR` selects the workspace directory (default `/workspace`), and
+- `ROOST_WORKSPACE_DIR` selects the workspace directory (default `~/workspace`,
+  with `~` expanded at driver startup — `/root/workspace` when the sandbox runs as
+  root, `/home/user/workspace` on a non-root sandbox such as E2B), and
   the driver makes sure it exists at startup. Failing to create it is a warning on
   stderr, not a startup failure: the driver's job is to accept turns, and a host that
   will not hand out that directory should still get a working control plane (the

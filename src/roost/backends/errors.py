@@ -9,6 +9,7 @@ from __future__ import annotations
 __all__ = [
     "BackendError",
     "DockerCommandError",
+    "MissingDependencyError",
     "SandboxNotFoundError",
     "SandboxTimeoutError",
 ]
@@ -29,6 +30,14 @@ class DockerCommandError(BackendError):
         super().__init__(
             f"{' '.join(argv)} exited with {returncode}: {stderr.strip() or stdout.strip()}"
         )
+
+
+class MissingDependencyError(BackendError, ImportError):
+    """backend 需要的可选依赖没装。
+
+    核心零运行时依赖是硬约束，因此可选 backend 的第三方 SDK 只在实例化时才 import；
+    没装时给出可执行的安装指引，而不是让 ImportError 从库深处漏出来。
+    """
 
 
 class SandboxNotFoundError(BackendError):

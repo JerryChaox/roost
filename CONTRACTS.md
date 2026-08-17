@@ -604,3 +604,19 @@ hang 的定义：turn 已提交、driver 事件流在 `stall_timeout` 内颗粒�
   不依赖 key 的部分（惰性 import 报错、URL/参数组装）常规单测。
 - **验收后置**：ROADMAP M7 的"三 demo 在 E2B 原样通过"在 key 提供后执行，
   在此之前 M7 todo 保持 open。
+
+## 附录 J 增补：M7 落地裁定（2026-08-17）
+
+- **附录 G 修订：工作区默认值 `/workspace` → `~/workspace`**（driver 启动
+  expanduser；root 即 /root/workspace，E2B 即 /home/user/workspace）。主 agent
+  E2B 验收抓到：非 root 沙箱建 `/workspace` 报 Errno 13，turn 直接 error。
+  `ROOST_WORKSPACE_DIR` 覆盖行为不变（覆盖值同样 expanduser）。
+- **控制面暴露安全增补**：E2B 公开端口 URL 任何人可达，而它就是 driver 控制面。
+  E2BSandboxBackend 默认 `allow_public_traffic=False`，每个 request 携带
+  `e2b-traffic-access-token`（实测无 token 403）；`True` 需显式声明。
+- `sandbox_timeout` 构造参数：E2B 沙箱存活时限（SDK 默认 300s 会回收），
+  create/connect 均带上（connect 只延长不缩短）；长会话宿主必须显式设置。
+- `pause` 后丢弃缓存的 SDK 沙箱对象、后续操作一律经 connect——"connect 隐含
+  恢复"在有对象缓存 backend 上的落地方式。
+- bind_host 实测结论：E2B 端口代理可达沙箱内 127.0.0.1，`DEFAULT_BIND_HOST`
+  取 127.0.0.1。SDK 版本 e2b 2.39.1。

@@ -23,8 +23,12 @@ classifiers = [
 ]
 dependencies = []
 
+# 核心零运行时依赖是硬约束；云 backend 走 extra。
+[project.optional-dependencies]
+e2b = ["e2b>=2.39,<3"]
+
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "e2b>=2.39,<3"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
