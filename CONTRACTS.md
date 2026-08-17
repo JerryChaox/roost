@@ -620,3 +620,28 @@ hang 的定义：turn 已提交、driver 事件流在 `stall_timeout` 内颗粒�
   恢复"在有对象缓存 backend 上的落地方式。
 - bind_host 实测结论：E2B 端口代理可达沙箱内 127.0.0.1，`DEFAULT_BIND_HOST`
   取 127.0.0.1。SDK 版本 e2b 2.39.1。
+
+## 附录 K：M3c Claude Agent SDK harness 契约（2026-08-17 钉定）
+
+- **依赖归属**：SDK 及其运行时（node、Claude CLI、claude-agent-sdk）预装在
+  沙箱镜像/模板里，cold boot 不做包安装（热路径纪律）。交付
+  `examples/sandbox-images/claude/Dockerfile`（基于 python:3.12-slim 增装，
+  安装命令以官方文档核实为准）；E2B custom template 做法写进同目录 README。
+  driver 本体保持 stdlib-only 不变。
+- **harness 选择**：driver 启动读 `ROOST_HARNESS`（`module:attr` 工厂），
+  默认 `roost.driver.harness:EchoHarness`；不可导入/实例化失败 → driver 启动
+  失败（宿主按 boot 失败处理）。
+- **Claude harness**：`src/roost/harness_claude.py`，惰性 import
+  claude-agent-sdk（未装时实例化报清晰错误）。行为：以工作区目录为 cwd 运行
+  SDK 会话并**跨 turn 续接同一会话**（会话状态落在工作区内 → 快照/恢复/替换
+  自动携带对话记忆）；流式文本 → Delta、工具调用 → ToolEvent(start/result)、
+  结束 → Terminal(ok + usage 透传)；SDK 异常交 worker 兜底。SDK 的 API 形态
+  （query/resume/streaming 消息类型）以官方文档核实，不凭记忆。
+- **凭据**：`ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` 由宿主经
+  SessionContextProvider env（或 demo 装配）注入沙箱，库与 driver 不解释、
+  不落日志。
+- **demo 装配**：`examples/cli_chat.py` 增 `--harness {echo,claude}`；claude
+  分支要求镜像参数并把本地环境的 ANTHROPIC_* 透传进 boot env。
+- **测试**：harness 单元层用 fake SDK 客户端测事件映射与会话续接参数；真 LLM
+  e2e 门控 `ROOST_CLAUDE_E2E=1` + `ANTHROPIC_API_KEY`（默认 skip，key 到位后
+  作为 M3c 验收跑通：真 agent 在 Docker 镜像里回答 + /kill 后记忆延续）。
