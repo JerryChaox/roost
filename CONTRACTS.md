@@ -583,3 +583,24 @@ hang 的定义：turn 已提交、driver 事件流在 `stall_timeout` 内颗粒�
 - backoff：进程内 monotonic dict，默认 1800s，0 关闭；跨进程 backoff 属
   生产化范围。
 - fingerprint 采用长度前缀编码防拼接碰撞（{"ab":"c"} ≠ {"a":"bc"}）。
+
+## 附录 J：M7 E2BSandboxBackend 契约（2026-08-17 钉定）
+
+- **可选依赖**：核心零依赖不破——pyproject `[project.optional-dependencies]`
+  增 `e2b = ["e2b>=<实现时核实的当前主版本>"]`；`src/roost/backends/e2b.py`
+  内部惰性 import，未装 extra 时实例化报清晰错误（指导 `pip install roost[e2b]`）。
+- **凭据**：构造参数 `api_key` 或环境变量 `ROOST_E2B_API_KEY`（内部映射给 SDK）。
+- **port 映射**（以 E2B 官方 SDK 现行文档核实为准，不凭记忆）：
+  create → 创建沙箱（template 参数 = E2B template id，None 用 E2B 默认）；
+  connect → 连接既有沙箱，暂停实例隐含恢复（契约 docstring）；pause → E2B
+  暂停能力；kill → 销毁；exec → 命令执行（env/timeout 语义对齐 Docker 版）；
+  upload → 文件写入；request → 经 E2B 的沙箱端口 host URL 对
+  DEFAULT_CONTROL_PORT 发 HTTPS。
+- **driver 绑定地址**：E2B 端口代理可达哪个 interface 以实测/文档为准；结论
+  写进模块 docstring 并回报（附录 F 增补的 bind_host 参数按结论传）。
+- **测试**：`tests/test_e2b_backend.py` 无 `ROOST_E2B_API_KEY` 时整文件 skip；
+  有 key 时镜像 Docker backend 套件形态（create/exec/upload/request/
+  pause→connect/kill/清理不留沙箱）+ 一条编排冒烟（cold boot + 单 turn）。
+  不依赖 key 的部分（惰性 import 报错、URL/参数组装）常规单测。
+- **验收后置**：ROADMAP M7 的"三 demo 在 E2B 原样通过"在 key 提供后执行，
+  在此之前 M7 todo 保持 open。
