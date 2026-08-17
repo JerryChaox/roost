@@ -34,4 +34,4 @@ testpaths = ["tests"]
 packages = ["src/roost"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/roost", "README.md", "LICENSE", "DESIGN.md", "CONTRACTS.md"]
+include = ["src/roost", "README.md", "LICENSE", "DESIGN.md", "CONTRACTS.md", "PROTOCOL.md"]
