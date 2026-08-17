@@ -22,17 +22,24 @@ from collections.abc import Callable
 from dataclasses import replace
 
 from ..events import DriverEvent, Terminal
+from .liveness import ActivityClock
 
 __all__ = ["EventLog"]
 
 
 class EventLog:
-    """per-turn 事件缓存。"""
+    """per-turn 事件缓存。
 
-    def __init__(self) -> None:
+    参数：
+        activity: liveness 时钟（附录 M）。每一次 append 都是一次 driver 内部活动，
+                  因此这里是它最主要的 touch 点——harness 产出的任何东西都算活着。
+    """
+
+    def __init__(self, *, activity: ActivityClock | None = None) -> None:
         self._events: dict[str, list[DriverEvent]] = {}
         self._signals: dict[str, asyncio.Event] = {}
         self._terminated: set[str] = set()
+        self._activity = activity
 
     # ---- 写入端 -------------------------------------------------------------
 
@@ -45,6 +52,8 @@ class EventLog:
         """追加一个事件；本方法分配 seq（覆盖入参值）并唤醒长轮询等待者。"""
         if turn_id in self._terminated:
             raise ValueError(f"turn {turn_id!r} 已 Terminal，不得再追加事件")
+        if self._activity is not None:
+            self._activity.touch()
         self.open(turn_id)
         events = self._events[turn_id]
         stamped = replace(event, seq=len(events) + 1)

@@ -35,7 +35,7 @@ from typing import Any
 from ..types import RuntimeStamp, SandboxHandle, TurnEnvelope
 from .codec import decode_binding, decode_stamp, decode_turn, dumps_json, to_iso
 from .pg_schema import SCHEMA_STATEMENTS, session_lock_key
-from .schema import STATUS_REQUEUED, STATUS_RUNNING
+from .schema import STATUS_REQUEUED, STATUS_RUNNING, TERMINAL_STATUSES
 
 __all__ = ["PostgresStateStore"]
 
@@ -389,11 +389,15 @@ class PostgresStateStore:
     async def finish_turn(self, turn_id: str, *, status: str) -> None:
         """收尾。仅作用于 status='running' 的行，其余静默 no-op。
 
-        status 只接受终态词汇 'finished' / 'failed'——'running' / 'requeued' 归
-        begin_turn / sweep 所有，放行会撞库内状态机（附录 A）。
+        status 只接受终态词汇 'finished' / 'failed' / 'attention'（后者是附录 M
+        对附录 A 词表的修订）——'running' / 'requeued' 归 begin_turn / sweep 所有，
+        放行会撞库内状态机。
         """
-        if status not in ("finished", "failed"):
-            raise ValueError(f"finish_turn 只接受 'finished'/'failed'，得到 {status!r}")
+        if status not in TERMINAL_STATUSES:
+            raise ValueError(
+                f"finish_turn 只接受 {'/'.join(map(repr, TERMINAL_STATUSES))}，"
+                f"得到 {status!r}"
+            )
 
         async with self._acquire() as conn:
             await conn.execute(
@@ -404,6 +408,21 @@ class PostgresStateStore:
                 turn_id,
                 STATUS_RUNNING,
             )
+
+    async def bump_error_ordinal(self, turn_id: str) -> int:
+        """driver error ordinal 自增，返回**自增后**的值（附录 M 的升级阶梯）。
+
+        单语句 `UPDATE … RETURNING`：自增与读回天然原子，多消费者并发调用时各自
+        拿到不同的序号（阶梯的每一级只走一次）。与 status 无关，跨 requeue 累积——
+        begin_turn 的接管刻意不复位它。行不存在时返回 0。
+        """
+        async with self._acquire() as conn:
+            value = await conn.fetchval(
+                "UPDATE roost_turns SET error_ordinal = error_ordinal + 1 "
+                "WHERE turn_id = $1 RETURNING error_ordinal",
+                turn_id,
+            )
+        return 0 if value is None else int(value)
 
     async def sweep_due_turns(self, *, limit: int) -> list[TurnEnvelope]:
         """到期未完成的 turn，转/保持 requeued 并返回，供 watchdog 重投。

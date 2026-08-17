@@ -787,3 +787,21 @@ runner 的拉流循环，watchdog 组件继续只负责 sweep requeue。
   heartbeat 新鲜但无 renderable 超 progress 阈值被杀重投；restart 阶梯
   1→2→6 各层可达（fake/注入驱动）；wall-clock 超限记 attention 不杀沙箱。
 - write-free 纪律测试：健康长 turn 全程 ops 零写入（fake recorder 断言）。
+
+## 附录 M 增补：M12 落地裁定（2026-08-17）
+
+- boot grace（90s）支配期内不下任何判定；first_renderable（30s）在 grace 结束
+  或收到首个非可渲染事件后才生效——两阈值不矛盾的唯一读法。
+- ordinal ≥6 终止时**杀沙箱**（到达该分支即持 kill/restart 判定，弃的只是重投）；
+  与 attention（明确保留沙箱）刻意相反。
+- wall-clock ceiling 按 turn 计，不随 driver restart 重置（否则上限不存在）；
+  restart 重置的是 progress clamp 基点。
+- runner 的 store 参数可选：缺省降级为"判定即杀"（M5 行为）——阶梯需要
+  durable ordinal，非持久计数会在每次 requeue 后重新 restart 循环。
+- 响应缺 `liveness_quiet_ms`（旧 driver）→ liveness 视为新鲜、仅 progress
+  判定；视为无穷会见到 pre-M12 沙箱就杀。
+- probe 偏 ACTIVE（wchan 不可读/含混判 ACTIVE，driver 自身 epoll 睡眠不算）：
+  假 ACTIVE 有 progress clock 兜底（矩阵行 2 无视 probe 杀），假 idle 会杀掉
+  正常工作的沙箱——偏向选择与生产一致。
+- 单时钟 stall_timeout 机制删除；其保护行为（hang 恢复、慢而活不误杀）由矩阵
+  测试与 e2e 更强覆盖承接。

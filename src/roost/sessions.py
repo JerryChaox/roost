@@ -35,6 +35,7 @@ import time
 from datetime import datetime, timezone
 
 from .control import ControlClient, ControlError
+from .driver.probe import ProbeResult, parse_probe_output
 from .events import LifecycleNotice
 from .fingerprint import runtime_fingerprint
 from .install import DriverInstaller
@@ -65,6 +66,11 @@ __all__ = [
 
 DEFAULT_BOOT_TIMEOUT = 30.0
 
+# cold boot 超过这个秒数还没 ready 时，采一次 /proc 概况进 ops（附录 M 的
+# 观测纪律：boot stall dump 简化版）。ready 的时限仍归 boot_timeout——
+# 这一发采集只是取证，不改变任何判定。
+DEFAULT_BOOT_STALL_AFTER = 5.0
+
 # forced update 失败后，这个 session 多久之内不再尝试替换（秒）。
 DEFAULT_UPDATE_BACKOFF = 1800.0
 
@@ -78,6 +84,17 @@ KIND_BOOT_STARTED = "boot_started"
 KIND_BOOT_FINISHED = "boot_finished"
 KIND_UPDATE_STARTED = "update_started"
 KIND_UPDATE_FINISHED = "update_finished"
+
+
+async def _drop(task: "asyncio.Task[None] | None") -> None:
+    """取消并回收一次性取证任务（它绝不该拖住 boot 的返回）。"""
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):
+        pass
 
 
 class BootError(RuntimeError):
@@ -115,6 +132,10 @@ class SessionSandboxRegistry:
         exec_timeout:       启动命令的 exec 超时（秒）。
         update_backoff:     forced update 失败后，本 session 暂停重试的时长（秒）。
                             0 表示不退避（每个 turn 都重试）。
+        probe_timeout:      单次活性探测的 exec 超时（秒）。它跑在"沙箱可能已经
+                            不健康"的路径上，因此必须自带时限。
+        boot_stall_after:   cold boot 超过这个秒数还没 ready 时采一次 /proc 概况
+                            进 ops（取证，不改变任何判定；时限仍归 boot_timeout）。
 
     **backoff 是进程内状态**（`session_id → 单调时钟到期点`）：进程重启即遗忘，
     多副本宿主之间也不共享，因此最坏情况是每个副本各自浪费一次失败的替换。
@@ -140,6 +161,8 @@ class SessionSandboxRegistry:
         request_timeout: float = 10.0,
         exec_timeout: float = 60.0,
         update_backoff: float = DEFAULT_UPDATE_BACKOFF,
+        probe_timeout: float = 15.0,
+        boot_stall_after: float = DEFAULT_BOOT_STALL_AFTER,
     ) -> None:
         if boot_timeout <= 0:
             raise ValueError("boot_timeout 必须 > 0")
@@ -162,6 +185,8 @@ class SessionSandboxRegistry:
         self._request_timeout = request_timeout
         self._exec_timeout = exec_timeout
         self._update_backoff = update_backoff
+        self._probe_timeout = probe_timeout
+        self._boot_stall_after = boot_stall_after
         self._fingerprint: str | None = None
         self._backoff_until: dict[str, float] = {}
 
@@ -199,6 +224,84 @@ class SessionSandboxRegistry:
         self._record("sandbox_bound", session_id=session_id,
                      sandbox_id=handle.sandbox_id)
         return handle, client
+
+    # -- 沙箱内 driver 的重启与活性探测（M12 / 附录 M） -------------------
+
+    async def restart_driver(
+        self, session_id: str, handle: SandboxHandle
+    ) -> ControlClient:
+        """重启沙箱内的 driver 进程，**保留工作区现场**（附录 M 的阶梯第一级）。
+
+        比冷启动便宜得多：容器、依赖、工作区、注入物全都原封不动，重来的只有那个
+        python 进程。代价是 driver 的 turn registry 与事件缓存随进程一起归零——
+        这不是缺陷而是**这一级阶梯的前提**：新进程对旧 turn 一无所知（`/v1/turn/…`
+        答 404 unknown_turn），因此把同一个 turn 重新提交给它是合法的，不会撞上
+        I1 的"绝不重跑"（那条不变量约束的是同一个 driver 进程内的重复提交）。
+
+        env 要**重新向宿主索取**：harness 选择与凭据是经 exec 环境变量进去的
+        （不落盘、不进镜像），只重放 start_command 会起一个没有 harness 配置的
+        driver——它能应答协议，然后把每个 turn 都跑成兜底错误。
+
+        失败原样抛出：调用方（runner）据此直接升级到下一级阶梯（杀沙箱），
+        而不是在一个状态不明的沙箱上继续等。
+        """
+        started = time.monotonic()
+        context = (
+            await self._context_provider.cold_boot_context(session_id)
+            if self._context_provider is not None
+            else None
+        )
+        env = dict(context.env) if context is not None else {}
+
+        # 停之前先停干净：老进程还占着端口时 start 会静默失败（EADDRINUSE 落进
+        # nohup 的日志里），宿主则会看到一个"重启成功但仍然卡死"的沙箱。
+        await self._backend.exec(
+            handle,
+            self._installer.stop_command(),
+            env=self._installer.env,
+            timeout_seconds=self._exec_timeout,
+        )
+        await self._start_driver(handle, env)
+        client = self._client(handle)
+        await self._await_ready(handle, started)
+        self._record(
+            "driver_restarted",
+            session_id=session_id,
+            sandbox_id=handle.sandbox_id,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+        )
+        return client
+
+    async def probe_activity(self, handle: SandboxHandle) -> ProbeResult:
+        """跑一次活性探测（附录 M 的 activity probe）。
+
+        探测**永不抛**：它是决策的输入，不是决策路径上的第二个失败源。exec 本身
+        失败（沙箱已经没了、超时）时返回 `active=False`，理由带上原因——那正是
+        矩阵第四行想要的判定，也顺带成为诊断快照的一部分。
+        """
+        try:
+            returncode, stdout, stderr = await self._backend.exec(
+                handle,
+                self._installer.probe_command(),
+                env=self._installer.env,
+                timeout_seconds=self._probe_timeout,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            return ProbeResult(
+                active=False, reason=f"probe_exec_failed: {exc!r}",
+                driver_pid=None, processes=[],
+            )
+        if returncode != 0:
+            return ProbeResult(
+                active=False,
+                reason=f"probe_exit_{returncode}",
+                driver_pid=None,
+                processes=[],
+                raw=(stderr or stdout)[:2000],
+            )
+        return parse_probe_output(stdout)
 
     async def destroy(self, handle: SandboxHandle) -> None:
         """销毁一个沙箱，**保留绑定行**（附录 H 的停滞收场）。
@@ -431,23 +534,48 @@ class SessionSandboxRegistry:
         探测失败（连接被拒、超时、非 200）都只是"还没起来"，一律重试到时限；
         唯一的终止条件是就绪或超时——启动是异步的，任何单次失败都不足以定论。
         """
-        probe = self._client(handle, timeout=self._health_timeout)
+        health = self._client(handle, timeout=self._health_timeout)
         last: BaseException | None = None
+        dump: asyncio.Task[None] | None = None
         while time.monotonic() - started < self._boot_timeout:
             try:
-                status = await probe.health()
+                status = await health.health()
             except asyncio.CancelledError:
                 raise
             except (ControlError, OSError, ValueError) as exc:
                 last = exc
             else:
                 if status.ok:
+                    await _drop(dump)
                     return
                 last = None
+            if dump is None and time.monotonic() - started >= self._boot_stall_after:
+                # 一次性、异步：慢 boot 的现场（进程起没起、卡在哪个 syscall）只有
+                # 此刻取得到；ready 之后或沙箱被销毁之后就再也没有了。刻意不 await，
+                # boot 的时限不该被取证拖长。
+                dump = asyncio.ensure_future(self._boot_stall_dump(handle, started))
             await asyncio.sleep(self._poll_interval)
+        await _drop(dump)
         raise BootTimeoutError(
             f"沙箱 {handle.sandbox_id!r} 在 {self._boot_timeout}s 内未就绪"
             + (f"（最后一次探测：{last!r}）" if last is not None else "")
+        )
+
+    async def _boot_stall_dump(self, handle: SandboxHandle, started: float) -> None:
+        """boot 卡住时的一次性取证。失败一律吞掉——它不是 boot 的一部分。"""
+        try:
+            result = await self.probe_activity(handle)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return
+        self._record(
+            "sandbox_boot_stalled",
+            sandbox_id=handle.sandbox_id,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            probe_active=result.active,
+            probe_reason=result.reason,
+            probe_processes=result.processes[:20],
         )
 
     async def _restore(

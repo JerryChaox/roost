@@ -30,6 +30,11 @@ runner 一跑就是分钟级，锁若延伸到那里，跨实例的 Postgres adv
 - `TurnStalledError`（沙箱卡死，runner 已销毁沙箱）与 cancel 同类：**不收尾、
   不记 failed**，锁自然过期后交给 sweep → watchdog requeue。区别只在它正常返回
   而不外抛——外抛会触发投递层的消费失败重投，凭空多出第二条恢复路径（附录 H）。
+- M12 的另外两种终结（`TurnAbandonedError` = 阶梯触顶不再重投、
+  `TurnNeedsAttentionError` = wall-clock 触顶需人工介入）**不需要在这里专案**：
+  runner 在抛之前已经把行写成 'failed' / 'attention'，而 finish_turn 只作用于
+  running 行——下面兜底的那次 finish_turn('failed') 因此是一次静默 no-op，
+  终态由做出决定的那一方写死，不会被这里覆盖成别的东西。
 """
 
 from __future__ import annotations

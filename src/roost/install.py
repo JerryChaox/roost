@@ -124,6 +124,23 @@ class DriverInstaller:
         )
         return ["sh", "-c", inner]
 
+    def stop_command(self) -> list[str]:
+        """停掉沙箱内的 driver 进程（附录 M 的 restart 阶梯第一步）。
+
+        前台执行、有输出：与 start 不同，调用方要等它真的停完才能起新的，
+        否则新进程会撞 EADDRINUSE。
+        """
+        return [self._python, "-m", f"{DRIVER_MODULE}.stop"]
+
+    def probe_command(self) -> list[str]:
+        """活性探测命令（附录 M 的 activity probe）。
+
+        脚本住在 roost 包内，因此**已经在 `files` 里**，也就自动计入 runtime
+        fingerprint——探测逻辑变了等于运行时变了，沙箱该被判定过期，不需要另建
+        一条分发/版本化通道。
+        """
+        return [self._python, "-m", f"{DRIVER_MODULE}.probe"]
+
     # -- 内部 -----------------------------------------------------------
 
     def _collect(self) -> dict[str, bytes]:

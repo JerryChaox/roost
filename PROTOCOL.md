@@ -43,7 +43,10 @@ Rules:
   unrecognised: a peer that does not state its version is not a peer this protocol
   can serve safely.
 - Additive, backwards-compatible fields do **not** bump the version. Decoders ignore
-  unknown object members and must not fail on them.
+  unknown object members and must not fail on them. Symmetrically, an *absent*
+  additive field means "this peer does not implement it" — never a default value.
+  Substituting a default silently turns "I cannot tell you" into a confident answer,
+  and the reader has no way to notice.
 - A protocol bump is a host/driver co-deployment event. A fingerprint bump is not.
 
 ## 3. Endpoints
@@ -99,13 +102,37 @@ naturally idempotent.
 Response `200`:
 
 ```json
-{"events": [{"type": "delta", "turn_id": "t-1", "seq": 1, "text": "hi"}], "next_after": 1}
+{"events": [{"type": "delta", "turn_id": "t-1", "seq": 1, "text": "hi"}],
+ "next_after": 1, "liveness_quiet_ms": 12}
 ```
 
 `next_after` is the cursor for the following request: the highest `seq` returned, or
 the unchanged `after` when the page is empty. Re-issuing a request with the same
 `after` returns the same page — repeated reads are safe, and a host that crashes
 mid-stream resumes by replaying its last cursor.
+
+`liveness_quiet_ms` (added after v1's first release; see §2) is the number of
+milliseconds since the driver last did **anything internally** — emitted an event,
+accepted a turn, started or finished executing one. It is present on every page,
+including empty ones, and it is computed **inside the driver**, so the host never has
+to reconcile two machines' clocks: an elapsed duration travels safely across a
+boundary that an absolute timestamp does not.
+
+Two things it deliberately does *not* count: the host's own polling (`/v1/health`,
+this endpoint), and any self-touching timer inside the driver. A process that looks
+alive because someone is watching it reports nothing at all — the field would never
+grow, and a host that keys a liveness decision off it would have built a clock that
+can never expire.
+
+A host reads it as one of two clocks: the driver being quiet is *not* by itself a
+reason to kill a sandbox (a slow API call is quiet and healthy), and the driver
+being busy is *not* by itself a reason to keep one (a driver that heartbeats while
+producing no renderable output is precisely the hang worth killing).
+
+**Field absent** means the driver predates the field — that is a valid v1 driver, and
+a host must treat it as "this runtime has no liveness clock" and fall back to its
+own progress tracking. Treating a missing field as `0` makes every such driver look
+permanently alive; treating it as infinite kills every one of them on sight.
 
 An unknown `turn_id` is answered `404 {"error": "unknown_turn"}`. Note that "unknown"
 is the expected answer after a driver restart (see §5) — it means *this process never
@@ -263,6 +290,25 @@ left implicit:
   keeps its `running` entry and receives no terminal event: the driver does not
   pretend it can resume across processes, and recovery is the host's requeue
   decision.
+- The driver is **restartable in place**. A host may stop it
+  (`python -m roost.driver.stop`, which signals every process whose command line
+  contains the argument `roost.driver`) and start it again inside a live sandbox,
+  keeping the workspace and everything else on disk. This is much cheaper than a cold
+  boot, and it is the first rung of a host's escalation ladder.
+
+  Two consequences are expected rather than tolerated. The port rebinds, because the
+  old process closed its listener and cancelled its in-flight long polls on `SIGTERM`.
+  And the turn registry and event buffers start **empty**: the new process answers
+  `404 unknown_turn` for turns the old one ran. That emptiness is exactly what makes
+  resubmitting the same turn legitimate — the "never run a turn twice" invariant is a
+  property of a single driver process, and a process that has no record of a turn has
+  not run it.
+- `python -m roost.driver.probe` reports, as one line of JSON, whether the driver
+  process tree is doing anything (`{"active": bool, "reason": str, "driver_pid": int
+  | null, "processes": [...]}`, read from `/proc`). It exists because both clocks
+  above can only see what the driver *reports*; the kernel can see what it is
+  actually doing. Exit status is always `0` — "the probe found nothing" is a result,
+  not a failure.
 
 ## 6. Error responses
 

@@ -95,10 +95,18 @@ class TurnSubmission:
 
 @dataclass(frozen=True)
 class EventPage:
-    """GET /v1/turn/{turn_id}/events 的响应。`next_after` 直接作为下次 cursor。"""
+    """GET /v1/turn/{turn_id}/events 的响应。`next_after` 直接作为下次 cursor。
+
+    `liveness_quiet_ms` 是 driver 自上次任意内部活动至今的毫秒数（附录 M 的
+    liveness clock）。**None = driver 没给这个字段**，即那个沙箱里跑的是不支持
+    双时钟的老 runtime；宿主此时只能靠 progress clock 判定（向后兼容的读法：
+    缺失是"不支持"，不是"很安静"——把它当 0 会让 liveness 永远新鲜，当 ∞ 会
+    让每个老沙箱立刻被判死）。
+    """
 
     events: list[DriverEvent]
     next_after: int
+    liveness_quiet_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -180,7 +188,16 @@ class ControlClient:
         next_after = obj.get("next_after")
         if isinstance(next_after, bool) or not isinstance(next_after, int):
             raise ProtocolError("字段 'next_after' 必须是 integer")
-        return EventPage(events=events, next_after=next_after)
+
+        quiet = obj.get("liveness_quiet_ms")
+        # 缺失/类型不对一律 None（= 不支持）。这里刻意不 raise：一个老 driver 的
+        # 事件流是完全合法的，只是它少一个时钟。
+        liveness_quiet_ms = (
+            quiet if isinstance(quiet, int) and not isinstance(quiet, bool) else None
+        )
+        return EventPage(
+            events=events, next_after=next_after, liveness_quiet_ms=liveness_quiet_ms
+        )
 
     async def health(self) -> HealthStatus:
         status, body = await self._request("GET", HEALTH_ENDPOINT)

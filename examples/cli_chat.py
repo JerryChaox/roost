@@ -13,9 +13,10 @@ agent 仍然只答一次。
 `sha256(session_id + 行序号 + 文本)`，确定性派生意味着"同一条消息重投多少次都是
 同一个 turn"，幂等因此可能成立。
 
-它同时是 **Demo 3（卡死恢复）** 的人工入口：短 `--stall-timeout/--lock-seconds`
-配合消息里的 `hang_on_attempt`（EchoHarness 的挂起注入）能看到完整的一条恢复链——
-沙箱被杀、turn 被 watchdog 重投、答案由新沙箱给出。
+它同时是 **Demo 3（卡死恢复）** 的人工入口：小阈值（`--boot-grace` /
+`--liveness-quiet` / `--progress-quiet`）配合 `--hang-first`（EchoHarness 的挂起
+注入）能看到附录 M 的完整阶梯——第一次判死**重启沙箱内的 driver 进程**（工作区
+不动），仍然挂死则杀沙箱、turn 被 watchdog 重投、答案由新沙箱给出。
 
 它同时是 **Demo 2（持久化）** 的人工入口：`--counter` 让每条消息去递增沙箱工作区里
 的计数器，`/kill` 当场 `docker rm -f` 掉沙箱；下一条消息会 cold boot 一个新沙箱、
@@ -213,7 +214,15 @@ async def chat(args: argparse.Namespace) -> int:
         boot_timeout=args.boot_timeout,
     )
     runner = SandboxTurnRunner(
-        registry, sink, backup=backup, stall_timeout=args.stall_timeout
+        registry,
+        sink,
+        store=store,
+        backup=backup,
+        boot_grace=args.boot_grace,
+        liveness_quiet=args.liveness_quiet,
+        progress_quiet=args.progress_quiet,
+        first_renderable=args.first_renderable,
+        wall_clock_ceiling=args.wall_clock_ceiling,
     )
     delivery = InProcessTurnDelivery(duplicate_factor=2 if args.duplicate else 1)
     processor = TurnProcessor(store, runner, delivery=delivery, lock_seconds=args.lock_seconds)
@@ -362,9 +371,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--message", action="append", default=[], help="非交互模式的消息（可重复）"
     )
     parser.add_argument("--boot-timeout", type=float, default=60.0, help="cold boot 时限（秒）")
+    # 双时钟阈值（附录 M）。库的默认值取生产值（90/30/180/30 秒），demo 用
+    # 秒级的小值——否则 --hang-first 要盯着屏幕等一分半才看得到第一次 restart。
     parser.add_argument(
-        "--stall-timeout", type=float, default=60.0,
-        help="事件流停滞多久算沙箱卡死（秒；Demo 3 配合 payload 的 hang_on_attempt 用）",
+        "--boot-grace", type=float, default=12.0,
+        help="首个事件之前的整体豁免（秒）",
+    )
+    parser.add_argument(
+        "--liveness-quiet", type=float, default=6.0,
+        help="driver 任意活动安静多久算 liveness 竭（秒）",
+    )
+    parser.add_argument(
+        "--progress-quiet", type=float, default=20.0,
+        help="可渲染事件安静多久算 progress 竭（秒）",
+    )
+    parser.add_argument(
+        "--first-renderable", type=float, default=10.0,
+        help="首个可渲染事件的期限（秒，自提交时刻起算）",
+    )
+    parser.add_argument(
+        "--wall-clock-ceiling", type=float, default=900.0,
+        help="turn 总时长上限（秒）；触顶记 attention 且**不杀沙箱**",
     )
     parser.add_argument("--lock-seconds", type=int, default=30, help="turn 锁时长（秒）")
     parser.add_argument(

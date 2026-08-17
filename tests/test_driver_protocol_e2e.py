@@ -189,10 +189,11 @@ async def test_long_poll_cursor_resumes_without_gaps_or_repeats(
         page = await client.fetch_events("t-cursor", after=after, wait_ms=200)
         rounds += 1
         if page.events:
-            # 同一 cursor 重复读是幂等的：再读一次拿到完全相同的一页。
-            assert await client.fetch_events(
-                "t-cursor", after=after, wait_ms=0
-            ) == page
+            # 同一 cursor 重复读是幂等的：再读一次拿到完全相同的**事件与游标**。
+            # 刻意不比整页：liveness_quiet_ms 是"距上次活动多久"，两次读之间本来
+            # 就该变——它是元字段，不属于被 cursor 保护的那份幂等内容。
+            again = await client.fetch_events("t-cursor", after=after, wait_ms=0)
+            assert (again.events, again.next_after) == (page.events, page.next_after)
             collected.extend(page.events)
             after = page.next_after
         if collected and isinstance(collected[-1], Terminal):
@@ -298,3 +299,27 @@ async def test_protocol_version_gate_and_reserved_endpoints(
         headers={"X-Roost-Protocol-Version": "1"},
     )
     assert (status, b"invalid_body" in body) == (400, True)
+
+
+async def test_events_page_reports_driver_liveness_quiet(driver: DriverProcess) -> None:
+    """`liveness_quiet_ms`（附录 M）：driver 自上次内部活动至今的毫秒数。
+
+    防的回归有两条，都会让宿主侧的双时钟静默退化成单时钟：
+
+    - 字段丢了 → 客户端读成 None → liveness 一律按"新鲜"处理，矩阵里靠 liveness
+      判定的三行永不可达；
+    - 字段被**宿主的轮询**刷新 → 它永远接近 0，同样永不可达。因此这里在一个已经
+      结束的 turn 上连拉两页：中间除了拉取什么都没发生，读数必须**增长**。
+    """
+    client = driver.client()
+    turn = make_turn("t-liveness", text="hi")
+    await client.submit_turn(turn)
+    events = await drain(client, "t-liveness")
+    assert isinstance(events[-1], Terminal)
+
+    first = await client.fetch_events("t-liveness", after=len(events), wait_ms=0)
+    assert first.liveness_quiet_ms is not None
+    await asyncio.sleep(0.3)
+    second = await client.fetch_events("t-liveness", after=len(events), wait_ms=0)
+
+    assert second.liveness_quiet_ms >= first.liveness_quiet_ms + 250

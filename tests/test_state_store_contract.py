@@ -336,3 +336,56 @@ async def test_sweep_stranded_requeued_recovers_after_grace(
         turn.turn_id
     ]
     assert await state_store.begin_turn(turn, lock_seconds=LOCK) is True
+
+
+# ---- error ordinal 与 attention 终态（附录 M） --------------------------------
+
+
+async def test_bump_error_ordinal_starts_at_one_and_increments(state_store) -> None:
+    """自增后的值原样返回：阶梯的每一级只走一次，靠的就是这个返回值。"""
+    turn = make_turn()
+    assert await state_store.begin_turn(turn, lock_seconds=LOCK) is True
+    assert await state_store.bump_error_ordinal(turn.turn_id) == 1
+    assert await state_store.bump_error_ordinal(turn.turn_id) == 2
+    assert await state_store.bump_error_ordinal(turn.turn_id) == 3
+
+
+async def test_error_ordinal_survives_requeue_and_takeover(
+    state_store, clock: FakeClock
+) -> None:
+    """**这条是附录 M 的事故本体**：ordinal 若随重投复位，阶梯永远停在第一级，
+    同一个沙箱会被反复 restart（生产里数到过约 95 轮）。因此 sweep 转 requeued、
+    begin_turn 接管都不得碰它。"""
+    turn = make_turn()
+    assert await state_store.begin_turn(turn, lock_seconds=LOCK) is True
+    assert await state_store.bump_error_ordinal(turn.turn_id) == 1
+
+    clock.advance(LOCK + 1)
+    assert [t.turn_id for t in await state_store.sweep_due_turns(limit=10)] == [
+        turn.turn_id
+    ]
+    assert await state_store.begin_turn(turn, lock_seconds=LOCK) is True
+
+    assert await state_store.bump_error_ordinal(turn.turn_id) == 2
+
+
+async def test_bump_error_ordinal_is_zero_for_unknown_turn(state_store) -> None:
+    """行不存在时没有可自增的东西——返回 0，不建行、不抛。"""
+    assert await state_store.bump_error_ordinal("nope") == 0
+
+
+async def test_finish_turn_accepts_attention(state_store) -> None:
+    """'attention'（附录 M 对附录 A 词表的修订）是终态：写得进，且从此不再被扫出。"""
+    turn = make_turn()
+    assert await state_store.begin_turn(turn, lock_seconds=LOCK) is True
+    await state_store.finish_turn(turn.turn_id, status="attention")
+
+    assert await state_store.begin_turn(turn, lock_seconds=LOCK) is False
+
+
+async def test_attention_turn_is_never_swept(state_store, clock: FakeClock) -> None:
+    turn = make_turn()
+    assert await state_store.begin_turn(turn, lock_seconds=LOCK) is True
+    await state_store.finish_turn(turn.turn_id, status="attention")
+    clock.advance(LOCK * 10)
+    assert await state_store.sweep_due_turns(limit=10) == []

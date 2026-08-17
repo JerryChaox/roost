@@ -57,7 +57,14 @@ class StateStore(Protocol):
 
     async def finish_turn(self, turn_id: str, *, status: str) -> None:
         """status 与 Terminal.status 是不同值空间（turn 行状态后续含 requeued/expired 等），
-        故意不共享枚举；Literal 化留到行为落地时。"""
+        故意不共享枚举；Literal 化留到行为落地时。
+        终态词表：'finished' / 'failed' / 'attention'（后者由附录 M 加入）。"""
+
+    async def bump_error_ordinal(self, turn_id: str) -> int:
+        """driver error ordinal 自增并返回自增后的值（附录 M 的升级阶梯计数）。
+
+        **必须持久化**：内存里的 marker 会被一次 requeue 清掉，阶梯就永远停在
+        第一级——那正是"同一个沙箱被反复 restart 近百轮"那次事故的机制。"""
 
     async def sweep_due_turns(self, *, limit: int) -> list[TurnEnvelope]:
         """锁过期且未完成的 turn，供 watchdog requeue。"""

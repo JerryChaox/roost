@@ -38,7 +38,12 @@ from .codec import (
     to_iso,
     utc_now_iso,
 )
-from .schema import STATUS_REQUEUED, STATUS_RUNNING, apply_schema
+from .schema import (
+    STATUS_REQUEUED,
+    STATUS_RUNNING,
+    TERMINAL_STATUSES,
+    apply_schema,
+)
 
 __all__ = ["SQLiteStateStore"]
 
@@ -339,11 +344,15 @@ class SQLiteStateStore:
     async def finish_turn(self, turn_id: str, *, status: str) -> None:
         """收尾。仅作用于 status='running' 的行，其余静默 no-op。
 
-        status 只接受终态词汇 'finished' / 'failed'——'running' / 'requeued' 归
-        begin_turn / sweep 所有，放行会撞库内状态机（附录 A）。
+        status 只接受终态词汇 'finished' / 'failed' / 'attention'（后者是附录 M
+        对附录 A 词表的修订：wall-clock 触顶 = 需要人工介入，不是失败）——
+        'running' / 'requeued' 归 begin_turn / sweep 所有，放行会撞库内状态机。
         """
-        if status not in ("finished", "failed"):
-            raise ValueError(f"finish_turn 只接受 'finished'/'failed'，得到 {status!r}")
+        if status not in TERMINAL_STATUSES:
+            raise ValueError(
+                f"finish_turn 只接受 {'/'.join(map(repr, TERMINAL_STATUSES))}，"
+                f"得到 {status!r}"
+            )
 
         def _finish(conn: sqlite3.Connection) -> None:
             conn.execute(
@@ -353,6 +362,38 @@ class SQLiteStateStore:
             )
 
         await self._run(_finish)
+
+    async def bump_error_ordinal(self, turn_id: str) -> int:
+        """driver error ordinal 自增，返回**自增后**的值（附录 M 的升级阶梯）。
+
+        与 status 无关：ordinal 记的是"这个 turn 在沙箱里出了几次事"，跨 requeue、
+        跨沙箱累积，因此 begin_turn 的接管刻意不复位它（内存 marker 会被重投清掉，
+        那样阶梯永远停在第一级，同一个沙箱被反复 restart）。
+
+        行不存在时返回 0（没有可自增的东西）。UPDATE + SELECT 放在同一事务里：
+        单写者线程本已串行，事务是为了"读到的就是我刚写的那一次"这件事有据可依，
+        而不依赖执行顺序的巧合。
+        """
+
+        def _bump(conn: sqlite3.Connection) -> int:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute(
+                    "UPDATE roost_turns SET error_ordinal = error_ordinal + 1 "
+                    "WHERE turn_id = ?",
+                    (turn_id,),
+                )
+                row = conn.execute(
+                    "SELECT error_ordinal FROM roost_turns WHERE turn_id = ?",
+                    (turn_id,),
+                ).fetchone()
+                conn.execute("COMMIT")
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+            return 0 if row is None else int(row["error_ordinal"])
+
+        return await self._run(_bump)
 
     async def sweep_due_turns(self, *, limit: int) -> list[TurnEnvelope]:
         """到期未完成的 turn，转/保持 requeued 并返回，供 watchdog 重投。

@@ -187,7 +187,7 @@ async def test_stalled_turn_is_left_to_sweep_not_to_delivery_retry(
 
     async def stalling_runner(turn: TurnEnvelope) -> None:
         calls.append(turn.attempt)
-        raise TurnStalledError(turn.turn_id, 0.5)
+        raise TurnStalledError(turn.turn_id, "liveness")
 
     processor = TurnProcessor(state_store, stalling_runner, delivery=delivery, lock_seconds=LOCK)
     turn = make_turn()

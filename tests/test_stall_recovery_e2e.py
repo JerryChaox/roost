@@ -1,19 +1,22 @@
-"""M5 端到端：卡死的沙箱被杀、turn 被 requeue、答案在新沙箱里给出（真 docker）。
+"""M12 端到端：升级阶梯在真 docker 上一级一级走完（CONTRACTS.md 附录 M）。
 
-防的回归（CONTRACTS.md 附录 H / DESIGN.md I1、I3）：
+防的回归（附录 H / M、DESIGN.md I1、I3）：
 
-- **卡死不再是死局**：harness 一个事件都不发地挂住 → 宿主侧停滞检测销毁沙箱 →
-  pipeline 放手（不收尾）→ 锁自然过期 → watchdog sweep → attempt+1 重投 →
-  cold boot 的新沙箱把答案给出来。这条链上任何一环断掉，用户的消息就永久没有
-  答复，而且没有任何东西会报错——这是本库最贵的一类静默失败。
-- **恢复只有这一条路径**：`hang_on_attempt=1` 的 turn 恰好执行两次（第一次挂死、
-  第二次答复）。执行三次意味着投递层的失败重投也在推同一个 turn，即两条恢复
-  路径并存（I1 排除的形态）；只执行一次意味着重投的 turn 被当成 duplicate 吃掉。
-- **idle 不误杀**：事件间隔逼近但不超过 stall_timeout 的慢 turn 必须跑完，
-  且 watchdog 全程空转——否则 M5 就把"慢"和"死"混为一谈，正常的长任务会被腰斩。
+- **卡死不再是死局，而且不是一步到位**：harness 一个事件都不发地挂住 →
+  双时钟判死 → 阶梯第一级**重启沙箱内的 driver 进程**（容器与工作区都留着）→
+  仍然挂死 → 第二级杀沙箱 → pipeline 放手（不收尾）→ 锁自然过期 → watchdog
+  sweep → attempt+1 重投 → cold boot 的新沙箱把答案给出来。这条链上任何一环
+  断掉，用户的消息就永久没有答复，而且没有任何东西会报错。
+- **恢复只有一条路径**：`hang_on_attempt=1` 的 turn 在 attempt=1 上被执行两次
+  （原进程一次、restart 后一次），attempt=2 答复一次。投递层的失败重投若也在推
+  同一个 turn，次数会对不上。
+- **慢而活不被杀**：liveness 竭（4 秒不出事件）、progress 未竭、活性探测在真
+  `/proc` 上看到一个在等 IO 的后代进程 → silence-defer 并继续。这是矩阵第三行
+  的实机验证，也是"慢"和"死"不被混为一谈的那条线。
+- **观测纪律**：重复 defer 不重复写。
 
 刻意全程走 delivery → TurnProcessor → SandboxTurnRunner → Watchdog 这条真实链路：
-停滞判定在 runner、放手在 pipeline、重投在 watchdog，三者的接缝正是要验的东西。
+判活在 runner、放手在 pipeline、重投在 watchdog，三者的接缝正是要验的东西。
 本机无 docker 时整文件 skip；夹具兜底清理本次新建的容器（roost.sandbox=1 label）。
 """
 
@@ -43,14 +46,17 @@ from roost.backends import SANDBOX_LABEL
 IMAGE = "python:3.12-slim"
 BOOT_TIMEOUT = 180.0
 
-# 停滞判定与锁都刻意调短，好让一次真实的 hang → 恢复在测试时间尺度内走完。
-# 三者互不耦合正是契约要求的：锁由心跳维持（stall 之前不会过期），
-# stall_timeout 只看事件间隔，watchdog interval 只决定发现得多快。
-STALL_TIMEOUT = 6.0
+# 阈值刻意调到秒级，好让一次真实的 hang → restart → kill → 恢复在测试时间尺度内
+# 走完。三者互不耦合正是契约要求的：锁由心跳维持，双时钟只看 driver 的活动与
+# 可渲染事件，watchdog interval 只决定发现得多快。
+BOOT_GRACE = 4.0
+LIVENESS_QUIET = 3.0
+PROGRESS_QUIET = 60.0
+FIRST_RENDERABLE = 60.0
 LOCK_SECONDS = 2
 WATCHDOG_INTERVAL = 0.5
 WAIT_MS = 1_000
-RECOVERY_TIMEOUT = 300.0
+RECOVERY_TIMEOUT = 420.0
 
 
 def _docker_available() -> bool:
@@ -146,7 +152,7 @@ def sandbox_cleanup():
 
 
 class Host:
-    """M1 内核 + M3b 编排 + M5 watchdog 接成一套可跑的宿主（测试用最小装配）。"""
+    """M1 内核 + M3b 编排 + M5 watchdog + M12 判活接成一套可跑的宿主。"""
 
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
@@ -166,9 +172,13 @@ class Host:
         self.runner = SandboxTurnRunner(
             self.registry,
             self.sink,
+            store=self.store,
             ops=self.ops,
             wait_ms=WAIT_MS,
-            stall_timeout=STALL_TIMEOUT,
+            boot_grace=BOOT_GRACE,
+            liveness_quiet=LIVENESS_QUIET,
+            progress_quiet=PROGRESS_QUIET,
+            first_renderable=FIRST_RENDERABLE,
         )
         self.delivery = InProcessTurnDelivery()
         self.processor = TurnProcessor(
@@ -180,17 +190,22 @@ class Host:
         )
         self.watchdog.start()
 
-    def turn_status(self, turn_id: str) -> str | None:
-        """直接读 source of truth 的行状态（port 面不暴露它，e2e 断言终态需要）。"""
+    def turn_row(self, turn_id: str) -> tuple[str, int] | None:
+        """直接读 source of truth（port 面不暴露它，e2e 断言终态与阶梯需要）。"""
         conn = sqlite3.connect(self.db_path)
         try:
             row = conn.execute(
-                "SELECT status FROM roost_turns WHERE turn_id = ?", (turn_id,)
+                "SELECT status, error_ordinal FROM roost_turns WHERE turn_id = ?",
+                (turn_id,),
             ).fetchone()
         except sqlite3.OperationalError:
             return None    # 建表是懒的：第一个 turn 落库之前表还不存在
         finally:
             conn.close()
+        return None if row is None else (row[0], row[1])
+
+    def turn_status(self, turn_id: str) -> str | None:
+        row = self.turn_row(turn_id)
         return None if row is None else row[0]
 
     async def wait_for_status(self, turn_id: str, status: str, timeout: float) -> None:
@@ -219,10 +234,10 @@ async def host(sandbox_cleanup, tmp_path: Path):
         await harness.close()
 
 
-async def test_hung_turn_is_killed_requeued_and_answered_by_a_new_sandbox(
+async def test_hung_turn_climbs_the_ladder_and_is_answered_by_a_new_sandbox(
     host: Host,
 ) -> None:
-    """attempt=1 挂死 → 沙箱被杀 → watchdog requeue → attempt=2 在新沙箱答复。"""
+    """挂死 → 重启 driver（沙箱不动）→ 仍挂死 → 杀沙箱 → requeue → 新沙箱答复。"""
     session = f"s-{uuid.uuid4().hex[:8]}"
     turn_id = "turn-hang"
 
@@ -233,61 +248,87 @@ async def test_hung_turn_is_killed_requeued_and_answered_by_a_new_sandbox(
             payload={"text": "recovered", "hang_on_attempt": 1},
         )
     )
-
-    # 第一个沙箱：turn 在里面挂住，等它被停滞判定杀掉。
     await host.wait_for_status(turn_id, "finished", RECOVERY_TIMEOUT)
 
-    # 1) 恰好杀过一次，且杀的是第一个沙箱。
+    # 1) 阶梯第一级：driver 进程被重启过恰好一次，且**没有**动沙箱。
+    restarts = host.ops.all_of("driver_restarted")
+    assert len(restarts) == 1
+    restarted_sandbox = restarts[0]["sandbox_id"]
+    assert host.ops.all_of("driver_restart_requested")[0]["error_ordinal"] == 1
+
+    # 2) 阶梯第二级：同一个沙箱在第二次判死时被杀（ordinal=2）。
     killed = host.ops.all_of("sandbox_stalled_killed")
     assert len(killed) == 1
     assert killed[0]["turn_id"] == turn_id
-    first_sandbox = killed[0]["sandbox_id"]
+    assert killed[0]["sandbox_id"] == restarted_sandbox
+    assert killed[0]["error_ordinal"] == 2
+    # 判定字段齐全（附录 M 的观测面）：谁触的线、两个时钟当时各是多少。
+    assert killed[0]["threshold_tripped"] in {"liveness", "progress"}
+    assert killed[0]["liveness_quiet_ms"] >= LIVENESS_QUIET * 1000
+    assert killed[0]["turn_age_ms"] > 0
 
-    # 2) watchdog 重投过这个 turn（attempt 由投递方 +1）。
+    # 3) watchdog 重投过这个 turn（attempt 由投递方 +1）。
     requeued = host.ops.all_of("watchdog_requeued")
     assert [turn_id] in [details["turn_ids"] for details in requeued]
 
-    # 3) 恰好执行两次：两次提交都是 accepted（duplicate 不会重跑），
-    #    并且第二次跑在**另一个**沙箱里。
+    # 4) 提交恰好三次：原进程、restart 后的新进程、新沙箱。三次都是 accepted——
+    #    restart 后的那次之所以合法，正是因为新进程的 registry 是空的。
     submissions = host.ops.all_of("turn_submitted")
-    assert [s["state"] for s in submissions] == ["accepted", "accepted"]
-    second = await host.store.get_binding(session)
-    assert second is not None and second.sandbox_id != first_sandbox
+    assert [s["state"] for s in submissions] == ["accepted"] * 3
+    assert [s["after_restart"] for s in submissions] == [False, True, False]
 
-    # 4) 旧沙箱已销毁；新沙箱还活着。
-    assert not _container_exists(first_sandbox)
+    # 5) 旧沙箱已销毁；新沙箱还活着，且换了一个。
+    second = await host.store.get_binding(session)
+    assert second is not None and second.sandbox_id != restarted_sandbox
+    assert not _container_exists(restarted_sandbox)
     assert _container_exists(second.sandbox_id)
 
-    # 5) 答案恰好给出一次，行终态 finished。
+    # 6) 答案恰好给出一次，行终态 finished，阶梯计数留在库里（不随重投复位）。
     assert host.sink.text() == "recovered"
-    assert host.turn_status(turn_id) == "finished"
+    assert host.turn_row(turn_id) == ("finished", 2)
 
-    # 6) 终态之后不再被扫出来：sweep 不会把一个已完成的 turn 反复重投。
+    # 7) 终态之后不再被扫出来：sweep 不会把一个已完成的 turn 反复重投。
     await asyncio.sleep(LOCK_SECONDS + WATCHDOG_INTERVAL * 2)
     assert host.ops.all_of("watchdog_requeued") == requeued
-    assert len(host.ops.all_of("turn_submitted")) == 2
+    assert len(host.ops.all_of("turn_submitted")) == 3
 
 
-async def test_slow_turn_is_not_mistaken_for_a_hang(host: Host) -> None:
-    """事件间隔逼近但不超 stall_timeout 的慢 turn：正常完成，sweep 全程空转。"""
+async def test_slow_but_active_turn_is_deferred_not_killed(host: Host) -> None:
+    """矩阵第三行的实机验证：liveness 竭、progress 未竭、/proc 说 ACTIVE → 继续。
+
+    `busy_child` 让沙箱里真的有一个在等 IO 的后代进程——这正是慢 API 调用/长 tool
+    在内核眼里的样子。少了它，"慢"和"死"在 /proc 上无从分辨。
+    """
     session = f"s-{uuid.uuid4().hex[:8]}"
     turn_id = "turn-slow"
 
-    # 每个 Delta 之前等 delay_ms；间隔 4s < stall_timeout 6s，且总时长远超它——
-    # "总时长上限"式的判定会在这里误杀，"事件间隔"式的判定不会。
     await host.delivery.enqueue(
         TurnEnvelope(
             turn_id=turn_id,
             session_id=session,
-            payload={"text": "slowbutalive", "delay_ms": 4_000},
+            payload={
+                "text": "slowbutalive",
+                "delay_ms": 4_000,      # > liveness_quiet，< progress_quiet
+                "busy_child": True,
+            },
         )
     )
     await host.wait_for_status(turn_id, "finished", RECOVERY_TIMEOUT)
 
     assert host.sink.text() == "slowbutalive"
+    # 没有任何一级阶梯被走过。
     assert host.ops.all_of("sandbox_stalled_killed") == []
+    assert host.ops.all_of("driver_restarted") == []
     assert host.ops.all_of("watchdog_requeued") == []
     assert len(host.ops.all_of("turn_submitted")) == 1
+    assert host.turn_row(turn_id) == ("finished", 0)   # 阶梯计数一次都没动
+
+    # defer 确实发生过（说明判定真的走到了矩阵第三行），且**只写了一条**。
+    deferred = host.ops.all_of("watch_silence_deferred")
+    assert len(deferred) == 1
+    assert deferred[0]["probe_active"] is True
+    assert deferred[0]["silence_deferred_count"] == 1
+
     # sweep 确实跑过（不是 watchdog 没起来），且每一次都空转。
     assert len(host.store.sweeps) >= 2
     assert set(host.store.sweeps) == {0}

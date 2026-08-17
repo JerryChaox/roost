@@ -50,8 +50,18 @@ CREATE TABLE IF NOT EXISTS roost_turns (
     attempt      INTEGER NOT NULL,
     locked_until DOUBLE PRECISION NOT NULL,
     created_at   TIMESTAMPTZ NOT NULL,
-    finished_at  TIMESTAMPTZ NULL
+    finished_at  TIMESTAMPTZ NULL,
+    error_ordinal INTEGER NOT NULL DEFAULT 0
 )
+"""
+
+# error_ordinal（附录 M）是后加的列：`CREATE TABLE IF NOT EXISTS` 对既有表什么都
+# 不做，因此必须再来一句幂等的 ALTER。PG 原生支持 `IF NOT EXISTS`，一句就够——
+# 演进策略是 expand-only（只加列、带默认值、不回填、不改旧语义），滚动升级期间
+# 老代码不读这一列，新代码读到的默认值 0 正是"还没出过事"。
+TURNS_ERROR_ORDINAL_DDL = """
+ALTER TABLE roost_turns
+    ADD COLUMN IF NOT EXISTS error_ordinal INTEGER NOT NULL DEFAULT 0
 """
 
 # 两条热路径各一个索引，与 SQLite 侧一致：has_active_turn 按
@@ -69,6 +79,7 @@ CREATE INDEX IF NOT EXISTS roost_turns_status_locked_idx
 SCHEMA_STATEMENTS: tuple[str, ...] = (
     SESSIONS_DDL,
     TURNS_DDL,
+    TURNS_ERROR_ORDINAL_DDL,
     TURNS_SESSION_INDEX_DDL,
     TURNS_SWEEP_INDEX_DDL,
 )

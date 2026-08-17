@@ -76,9 +76,20 @@ from .reducer import (
     reduce_events,
 )
 from .runner import (
-    DEFAULT_STALL_TIMEOUT,
+    DEFAULT_BOOT_GRACE,
+    DEFAULT_FIRST_RENDERABLE,
+    DEFAULT_LIVENESS_QUIET,
+    DEFAULT_LONG_WATCH_INTERVAL,
+    DEFAULT_PROGRESS_QUIET,
+    DEFAULT_ROUND_BUDGET,
+    DEFAULT_WALL_CLOCK_CEILING,
+    ORDINAL_GIVE_UP,
+    ORDINAL_KILL,
+    ORDINAL_RESTART,
     SandboxTurnRunner,
+    TurnAbandonedError,
     TurnFailedError,
+    TurnNeedsAttentionError,
     TurnStalledError,
 )
 from .protocol import WORKSPACE_CONTENT_TYPE
@@ -188,8 +199,20 @@ __all__ = [
     "TurnFailedError",
     # M5 watchdog 与 liveness
     "TurnStalledError",
-    "DEFAULT_STALL_TIMEOUT",
     "Watchdog",
+    # M12 生产级 watchdog 语义（双时钟 / 决策矩阵 / 升级阶梯）
+    "TurnAbandonedError",
+    "TurnNeedsAttentionError",
+    "DEFAULT_BOOT_GRACE",
+    "DEFAULT_LIVENESS_QUIET",
+    "DEFAULT_PROGRESS_QUIET",
+    "DEFAULT_FIRST_RENDERABLE",
+    "DEFAULT_ROUND_BUDGET",
+    "DEFAULT_LONG_WATCH_INTERVAL",
+    "DEFAULT_WALL_CLOCK_CEILING",
+    "ORDINAL_RESTART",
+    "ORDINAL_KILL",
+    "ORDINAL_GIVE_UP",
     # M6 零停机 forced update
     "runtime_fingerprint",
     "DEFAULT_UPDATE_BACKOFF",

@@ -49,9 +49,11 @@ python -m venv .venv && .venv/bin/pip install -e .
 #   you> /kill           →  docker rm -f <sandbox>
 #   you> tick            →  agent> tick counter=2   (fresh container, restored state)
 
-# Demo 3 — stall recovery: first attempt hangs inside the sandbox; the
-# watchdog kills it, requeues, and the answer arrives from a fresh sandbox.
-.venv/bin/python examples/cli_chat.py --hang-first --stall-timeout 6 --lock-seconds 2
+# Demo 3 — stall recovery: the first attempt hangs inside the sandbox. The
+# watchdog restarts the driver in place, then kills the sandbox when that does
+# not help, and the answer arrives from a fresh one.
+.venv/bin/python examples/cli_chat.py --hang-first --boot-grace 6 \
+    --liveness-quiet 3 --lock-seconds 2
 ```
 
 The demo agent is a deliberately boring echo harness — the point of these demos
@@ -83,10 +85,14 @@ strings, and host context rides through as an uninterpreted blob.
 ## Status
 
 Pre-release, interfaces stabilizing. Implemented and tested today: the turn
-pipeline, SQLite state store, in-process delivery, the driver and control
-protocol, Docker backend, filesystem/S3 snapshot stores, watchdog stall
-recovery, and fingerprint-driven zero-downtime updates. Not yet: an LLM harness
-(echo only), the E2B backend, PyPI packaging. See [ROADMAP.md](ROADMAP.md).
+pipeline, SQLite and Postgres state stores (advisory-locked session mutex for
+multi-consumer hosts), in-process delivery, the driver and control protocol,
+Docker and E2B backends, filesystem/S3 snapshot stores, a production-grade
+watchdog (dual liveness/progress clocks, /proc activity probe, a persistent
+restart→kill→abandon ladder), fingerprint-driven zero-downtime updates, and a
+Claude Agent SDK harness whose session memory rides the workspace snapshot.
+Not yet: PyPI packaging, and the Claude harness still awaits its real-LLM
+acceptance run. See [ROADMAP.md](ROADMAP.md).
 
 ## Read next
 

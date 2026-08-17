@@ -46,7 +46,10 @@ from roost.backends import SANDBOX_LABEL
 
 IMAGE = os.environ.get("ROOST_CLAUDE_IMAGE", "roost-claude")
 BOOT_TIMEOUT = 240.0
-STALL_TIMEOUT = 300.0
+# 真实模型调用之间可以安静很久（长 tool、extended thinking），阈值因此放宽到
+# 分钟级：这条 e2e 验的是 harness 能不能答话，不是判活的灵敏度。
+LIVENESS_QUIET = 300.0
+PROGRESS_QUIET = 600.0
 PASSPHRASE = "purple-otter-1917"
 
 
@@ -160,7 +163,13 @@ class Host:
             boot_timeout=BOOT_TIMEOUT,
         )
         self.runner = SandboxTurnRunner(
-            self.registry, self.sink, backup=self.backup, stall_timeout=STALL_TIMEOUT
+            self.registry,
+            self.sink,
+            store=self.store,
+            backup=self.backup,
+            liveness_quiet=LIVENESS_QUIET,
+            progress_quiet=PROGRESS_QUIET,
+            first_renderable=PROGRESS_QUIET,
         )
         self.delivery = InProcessTurnDelivery()
         self.processor = TurnProcessor(

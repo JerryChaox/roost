@@ -21,6 +21,7 @@ from ..events import Terminal
 from ..types import TurnEnvelope
 from .emit import EventLog
 from .harness import Harness
+from .liveness import ActivityClock
 from .registry import TurnRegistry
 
 __all__ = ["TurnWorker"]
@@ -30,14 +31,25 @@ STATUS_ERROR = "error"
 
 
 class TurnWorker:
-    """把 registry 已接受的 turn 串行喂给 harness。"""
+    """把 registry 已接受的 turn 串行喂给 harness。
+
+    `activity`（附录 M 的 liveness 时钟）在 turn 的生命周期转换处 touch：入队、
+    开始执行、执行结束。事件产出的 touch 在 EventLog 里——两处合起来就是"driver
+    做过的所有事"，宿主的 liveness clock 读的正是它。
+    """
 
     def __init__(
-        self, harness: Harness, registry: TurnRegistry, events: EventLog
+        self,
+        harness: Harness,
+        registry: TurnRegistry,
+        events: EventLog,
+        *,
+        activity: ActivityClock | None = None,
     ) -> None:
         self._harness = harness
         self._registry = registry
         self._events = events
+        self._activity = activity
         self._queue: asyncio.Queue[TurnEnvelope] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
 
@@ -66,8 +78,13 @@ class TurnWorker:
 
     def submit(self, turn: TurnEnvelope) -> None:
         """排入 FIFO。仅由 server 在 registry 接受（非 duplicate）后调用。"""
+        self._touch()
         self._events.open(turn.turn_id)
         self._queue.put_nowait(turn)
+
+    def _touch(self) -> None:
+        if self._activity is not None:
+            self._activity.touch()
 
     async def _loop(self) -> None:
         while True:
@@ -75,6 +92,7 @@ class TurnWorker:
             await self._run_one(turn)
 
     async def _run_one(self, turn: TurnEnvelope) -> None:
+        self._touch()
         self._registry.mark_running(turn.turn_id)
         emit = self._events.emitter(turn.turn_id)
         try:
@@ -87,6 +105,7 @@ class TurnWorker:
             self._ensure_terminal(turn, error=f"{type(exc).__name__}: {exc}")
         else:
             self._ensure_terminal(turn, error="harness 结束时未 emit Terminal")
+        self._touch()
         self._registry.mark_done(turn.turn_id, status=self._terminal_status(turn.turn_id))
 
     def _ensure_terminal(self, turn: TurnEnvelope, *, error: str) -> None:

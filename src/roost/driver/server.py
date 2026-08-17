@@ -37,6 +37,7 @@ from ..protocol import (
 from .emit import EventLog
 from .harness import Harness
 from .httpd import HttpServer, Request, Response
+from .liveness import ActivityClock
 from .registry import TurnRegistry
 from .worker import TurnWorker
 from .workspace import (
@@ -71,8 +72,11 @@ class ControlServer:
             workspace_dir_from_env() if workspace_dir is None else Path(workspace_dir)
         )
         self._registry = TurnRegistry()
-        self._events = EventLog()
-        self._worker = TurnWorker(harness, self._registry, self._events)
+        self._activity = ActivityClock()
+        self._events = EventLog(activity=self._activity)
+        self._worker = TurnWorker(
+            harness, self._registry, self._events, activity=self._activity
+        )
         self._http = HttpServer(self._handle, host=host, port=port)
         self._started_at = time.monotonic()
 
@@ -161,11 +165,16 @@ class ControlServer:
         events, next_after = await self._events.read(
             turn_id, after=after, wait_ms=min(wait_ms, MAX_WAIT_MS)
         )
+        # `liveness_quiet_ms` 是附录 M 的双时钟里 driver 侧那一半：pull 模型没有
+        # 心跳上报，于是它挂在每一页（含空页）的响应上。差值在 driver 本地算，
+        # 跨机时钟不参与判定。宿主拿不到这个字段（老 driver）时按"不支持 liveness
+        # 时钟"处理，只用 progress 时钟——新增字段，向后兼容。
         return _json(
             200,
             {
                 "events": [encode_event(event) for event in events],
                 "next_after": next_after,
+                "liveness_quiet_ms": self._activity.quiet_ms(),
             },
         )
 

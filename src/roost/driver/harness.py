@@ -109,6 +109,10 @@ class EchoHarness:
       同样刻意做成 payload 开关而不是新协议字段/端点——协议面零增（附录 H）；
       按 attempt 触发是为了让"第一次挂死、requeue 后的第二次正常答复"能在同一个
       turn_id 上表达出来；
+    - `payload["busy_child"]`：为真则在回显期间挂一个真的子进程（阻塞在管道读上）。
+      这是 **M12（活性探测）的观测面**：它让"慢而活"在 `/proc` 上真的看起来像
+      活着——只靠 `asyncio.sleep` 的慢 turn 与一个挂死的 turn 在内核眼里是同一
+      个样子（driver 都睡在 epoll 上），那样就没法验证矩阵第三行与第四行的分岔；
     - `payload["counter"]`：为真则递增工作区里的 `counter` 文件并把新值附在回显后
       （`… counter=<n>`）。这是 **Demo 2（持久化）的观测面**：counter 跨沙箱重生
       续增，才说明工作区真的被备份并恢复了。刻意做成 payload 开关而不是新协议
@@ -142,10 +146,20 @@ class EchoHarness:
         delay_ms = _int_option(payload, "delay_ms", self._delay_ms)
         fail = payload.get("fail") or self._fail
 
-        for start in range(0, max(len(text), 1), self._chunk_size):
-            if delay_ms > 0:
-                await asyncio.sleep(delay_ms / 1000)
-            emit(Delta(turn_id=turn.turn_id, text=text[start : start + self._chunk_size], seq=0))
+        child = await _busy_child() if payload.get("busy_child") else None
+        try:
+            for start in range(0, max(len(text), 1), self._chunk_size):
+                if delay_ms > 0:
+                    await asyncio.sleep(delay_ms / 1000)
+                emit(
+                    Delta(
+                        turn_id=turn.turn_id,
+                        text=text[start : start + self._chunk_size],
+                        seq=0,
+                    )
+                )
+        finally:
+            await _reap(child)
 
         if fail:
             raise RuntimeError(str(fail))
@@ -183,6 +197,34 @@ class EchoHarness:
         value += 1
         path.write_text(f"{value}\n", encoding="utf-8")
         return value
+
+
+async def _busy_child() -> asyncio.subprocess.Process | None:
+    """起一个阻塞在管道读上的子进程（`cat` 等一个永远不来的 stdin）。
+
+    它不烧 CPU，但在 `/proc` 里是一个货真价实的、在等外部输入的后代进程——
+    这正是活性探测要认出来的"慢而活"。起不来就算了（探测那边会退回到"只有
+    driver 在睡"，测试自己会失败得很清楚，不该在这里把 turn 也带崩）。
+    """
+    try:
+        return await asyncio.create_subprocess_exec(
+            "sh", "-c", "cat",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError:
+        return None
+
+
+async def _reap(child: "asyncio.subprocess.Process | None") -> None:
+    if child is None:
+        return
+    try:
+        child.kill()
+    except ProcessLookupError:
+        pass
+    await child.wait()
 
 
 def _echo_text(payload: dict[str, Any]) -> str:
