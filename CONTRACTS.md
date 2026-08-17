@@ -362,3 +362,50 @@ class Harness(Protocol):
 - 附录 D 增补（M3a 实现裁定，均留 M3 集成处理）：exec 无 detach 参数，detached
   以 `sh -c "nohup … &"` 调用方约定表达；connect 对 exited 容器原样返回 handle，
   活性判定归 registry 的 health 探测；DEFAULT_CONTROL_PORT 双处常量待统一。
+
+## 附录 F：M3b 编排与首个端到端契约（2026-08-17 钉定）
+
+范围裁定：M3b = cold boot 编排 + 事件 reducer + turn runner 接线 + CLI demo，
+harness 用 EchoHarness（Demo 1 验收 exactly-once，与 LLM 无关）；真实
+Claude Agent SDK harness 拆为 M3c（M8 前完成）；快照恢复/备份不在本段（M4）。
+
+### 交付模块
+
+- `src/roost/install.py`：DriverInstaller——用 importlib 遍历收集已安装 roost 包
+  源码（含 driver/control/events/types/protocol），映射为
+  `/opt/roost/src/roost/**` 的 files dict；产出启动命令
+  `sh -c "nohup env ROOST_DRIVER_PORT=8787 PYTHONPATH=/opt/roost/src
+  python -m roost.driver >/tmp/roost-driver.log 2>&1 &"`（附录 D 的 detached 约定）。
+- `src/roost/sessions.py`：SessionSandboxRegistry——
+  `get_or_create(session_id) -> (SandboxHandle, ControlClient)`：
+  有绑定 → backend.connect → health 探测（短超时）通过即复用；探测失败视为死
+  沙箱 → cold boot 新沙箱并 `store.swap_binding(old, new)`；无绑定 → cold boot
+  + `swap_binding(None, new)`（附录 A 预留分支自此可达）。cold boot 流程：
+  create → upload(DriverInstaller.files) → exec 启动命令 → 轮询 /v1/health 就绪
+  （超时默认 30s，超时 raise 并 kill 半成品沙箱，绝不留未绑定的活容器）。
+  boot 期间经注入的 EventSink 发 lifecycle_notice（boot_started/boot_finished，
+  含 elapsed_ms）。SessionContextProvider 的注入物并入同一次 upload。
+- `src/roost/reducer.py`：纯函数 DriverEvent → DisplayEvent
+  （delta→text、tool_event→tool、lifecycle_notice→lifecycle_notice、
+  terminal→terminal；body 为源事件字段的 dict，session_id 由调用方补入）。
+- `src/roost/runner.py`：SandboxTurnRunner——实现 M1 TurnProcessor 的 runner
+  签名：get_or_create → ControlClient 提交 turn（duplicate 视为已在跑，照常
+  拉流）→ 长轮询拉事件至 Terminal → 经 reducer 逐批送 EventSink。Terminal
+  status='error' 时 runner raise（让 M1 pipeline 记 'failed'）。
+- `examples/cli_chat.py`：REPL demo 宿主——逐行输入 → 确定性 turn_id
+  （sha256(session_id + 行序号 + 文本)）→ delivery.enqueue；EventSink 打印
+  text/lifecycle；`--duplicate` 让每条消息 enqueue 两次（Demo 1 演示入口）；
+  `--backend docker` 默认。
+- 常量统一（附录 D 遗留）：DEFAULT_CONTROL_PORT 收敛到 `roost/protocol.py`，
+  backends 与 driver 引用之。
+
+### 验收测试
+
+- 编排端到端（需 docker，无则 skip）：SessionSandboxRegistry cold boot 真容器
+  → runner 跑一个 EchoHarness turn → EventSink 收到 text…terminal 且 seq 递增；
+  同 turn_id 经 delivery 双投 → runner 只执行一次、EventSink 只收到一份终态
+  （Demo 1 的自动化形态）。
+- 复用与死沙箱路径：连续两 turn 复用同一 sandbox_id；docker rm -f 后下一 turn
+  自动 cold boot 新沙箱且 swap_binding 生效。
+- reducer 纯函数单测。boot 超时路径：注入永不就绪的假 backend → raise 且 kill
+  被调用。
