@@ -308,3 +308,41 @@ class Harness(Protocol):
 
 真实 Claude Agent SDK harness（M3）、driver 打包成单 artifact 与 fingerprint
 （M6 前置）、`/v1/update` 行为（M6）、事件缓存有界化（M6）。
+
+## 附录 C：M4 SnapshotStore 实现契约（2026-08-17 钉定，与 M2 并行）
+
+- `src/roost/snapshot/fs.py`：`FileSnapshotStore(root)`。opaque key → 文件名用
+  URL 百分号编码（safe=''），不解释 key 结构；写入原子（同目录 tmp + rename）；
+  get 未命中返回 None。
+- `src/roost/snapshot/sigv4.py`：AWS Signature V4 纯函数实现（stdlib
+  hmac/hashlib），带 AWS 官方文档 known-answer 测试向量。**零运行时依赖是硬约束，
+  不引 boto3/aiohttp。**
+- `src/roost/snapshot/s3.py`：`S3SnapshotStore(bucket, *, endpoint_url, region,
+  access_key, secret_key, prefix="")`。path-style URL；PUT/GET object 单请求
+  （不做 multipart，对象大小上界由宿主负责，文档注明）；GET 404 → None，
+  其余非 2xx raise。IO 用 urllib + 线程 executor 包装成 async。endpoint_url
+  可覆盖 → 兼容 MinIO / GCS HMAC 互操作。
+- 测试：FS roundtrip / 原子性 / 未命中；SigV4 known-answer 向量；stdlib 假 S3
+  HTTP server 的 PUT/GET roundtrip + Authorization header 结构断言。
+  不访问真实云。
+
+## 附录 D：M3a DockerSandboxBackend 契约（2026-08-17 钉定，与 M2 并行）
+
+- `src/roost/backends/docker.py`：实现 SandboxBackend port，**shell 出 docker CLI**
+  （asyncio subprocess），不引 docker SDK。容器标 label `roost.sandbox=1`。
+- `create(template=镜像名，默认 "python:3.12-slim")`：`docker run -d`，容器主进程
+  `sleep infinity`，控制端口 8787（模块内常量 DEFAULT_CONTROL_PORT，与 driver
+  默认一致；统一常量位置留 M3 集成时处理）发布到 127.0.0.1 的临时宿主端口。
+- `connect(sandbox_id)`：docker inspect 验证存在；处于 paused 时 unpause（契约：
+  connect 隐含恢复）。不存在 → raise。
+- `pause` → docker pause；`kill` → docker rm -f。
+- `exec` → docker exec（env 经 -e），timeout 到期终止并 raise。
+- `upload`：files dict（容器内绝对路径 → bytes）打成内存 tar，经
+  `docker cp - <id>:/` 落盘。
+- `request`：docker port 解析 8787 的宿主映射端口，urllib 对 127.0.0.1 发 HTTP
+  （线程 executor 包装）。
+- 测试：本机无 docker 时整文件 skip；覆盖 create→exec 回显、upload 后 exec 读回、
+  exec 起 `python -m http.server 8787`（detached）后 request 打通、pause→connect
+  隐含恢复、fixture 兜底 rm -f 不留容器。
+- 边界：不改 `src/roost/__init__.py`（导出在集成时统一加）、不碰 control/ 与
+  driver/（M2 写入集）。附录 C 同样受此边界约束。
