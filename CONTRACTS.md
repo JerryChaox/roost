@@ -568,3 +568,18 @@ hang 的定义：turn 已提交、driver 事件流在 `stall_timeout` 内颗粒�
   A 仍绑定、backoff 生效（turn3 在 backoff 窗口内不再尝试更新，ops 无第二次
   forced_update_*）。
 - swap CAS 失败路径单测（fake store）：新沙箱被 kill、不覆盖他人绑定。
+
+## 附录 I 增补：M6 落地裁定（2026-08-17）
+
+- **update notice 成对后置**：附录 I 的"started 作进度"与"失败路径不发事件"
+  不可兼得；裁定换绑成功后成对补发 started(0)+finished(total)，失败路径零事件、
+  显示流永不悬空"更新中"。真进度心跳留作宿主可选需求，暂不立项。
+- get_stamp 的 store 读取失败照常抛出（与相邻 get_binding 同待遇）——
+  "失败永不伤 turn"覆盖更新流程自身的三条失败路径，不覆盖 store 抖动。
+- 换绑成功即 kill 旧沙箱，不加 has_active_turn 保护——与 M1 串行化边界一致
+  （单消费者下无并发 turn；多消费者互斥属 advisory lock 里程碑）。
+- `reserved_until_m6` 错误码字面保留（wire 兼容），语义为永久 reserved，
+  PROTOCOL.md 已说明。
+- backoff：进程内 monotonic dict，默认 1800s，0 关闭；跨进程 backoff 属
+  生产化范围。
+- fingerprint 采用长度前缀编码防拼接碰撞（{"ab":"c"} ≠ {"a":"bc"}）。

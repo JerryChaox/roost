@@ -44,6 +44,7 @@ from .ports import (
     StateStore,
     TurnDelivery,
 )
+from .fingerprint import runtime_fingerprint
 from .install import DriverInstaller
 from .pipeline import TurnProcessor
 from .protocol import (
@@ -73,7 +74,9 @@ from .runner import (
     TurnFailedError,
     TurnStalledError,
 )
+from .protocol import WORKSPACE_CONTENT_TYPE
 from .sessions import (
+    DEFAULT_UPDATE_BACKOFF,
     BindingConflictError,
     BootError,
     BootTimeoutError,
@@ -151,6 +154,9 @@ __all__ = [
     "TurnStalledError",
     "DEFAULT_STALL_TIMEOUT",
     "Watchdog",
+    # M6 零停机 forced update
+    "runtime_fingerprint",
+    "DEFAULT_UPDATE_BACKOFF",
     "reduce_event",
     "reduce_events",
     "driver_display_seq",
@@ -168,5 +174,6 @@ __all__ = [
     "HEALTH_ENDPOINT",
     "UPDATE_ENDPOINT",
     "WORKSPACE_ENDPOINT",
+    "WORKSPACE_CONTENT_TYPE",
     "DEFAULT_CONTROL_PORT",
 ]

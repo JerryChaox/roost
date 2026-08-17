@@ -21,6 +21,11 @@ session 现在有一个活着的、装好 driver 的沙箱"**，并把绑定这�
   boot 失败处理（kill 半成品）——把一个丢了历史的空沙箱交出去，比 boot 失败更糟：
   它会以"一切正常"的样子继续跑，然后在下一个 turn 边界把空工作区备份回去，
   真正的状态就此丢失（备份覆盖恢复源）。
+- **runtime 过期走替换而不是原地升级**（M6 / 附录 I）：复用路径命中一个健康沙箱、
+  但它的 `RuntimeStamp.runtime_files_hash` 与当前 fingerprint 不符时，本模块
+  当场用"取活快照 → cold boot 新沙箱 → CAS 换绑 → 杀旧"把它换掉。失败的每一步
+  都退回旧沙箱继续服务本 turn（I3：失败永不伤 turn），并给这个 session 记一段
+  backoff，避免每个 turn 都重试一次昂贵的 boot。
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ from datetime import datetime, timezone
 
 from .control import ControlClient, ControlError
 from .events import LifecycleNotice
+from .fingerprint import runtime_fingerprint
 from .install import DriverInstaller
 from .ports import (
     EventSink,
@@ -50,18 +56,28 @@ __all__ = [
     "BootTimeoutError",
     "BindingConflictError",
     "DEFAULT_BOOT_TIMEOUT",
+    "DEFAULT_UPDATE_BACKOFF",
     "SEQ_BOOT_STARTED",
     "SEQ_BOOT_FINISHED",
+    "SEQ_UPDATE_STARTED",
+    "SEQ_UPDATE_FINISHED",
 ]
 
 DEFAULT_BOOT_TIMEOUT = 30.0
 
-# boot 通告在 display 流保留段里的固定位置（reducer.LIFECYCLE_SEQ_RESERVED）。
+# forced update 失败后，这个 session 多久之内不再尝试替换（秒）。
+DEFAULT_UPDATE_BACKOFF = 1800.0
+
+# boot/update 通告在 display 流保留段里的固定位置（reducer.LIFECYCLE_SEQ_RESERVED）。
 SEQ_BOOT_STARTED = 1
 SEQ_BOOT_FINISHED = 2
+SEQ_UPDATE_STARTED = 3
+SEQ_UPDATE_FINISHED = 4
 
 KIND_BOOT_STARTED = "boot_started"
 KIND_BOOT_FINISHED = "boot_finished"
+KIND_UPDATE_STARTED = "update_started"
+KIND_UPDATE_FINISHED = "update_finished"
 
 
 class BootError(RuntimeError):
@@ -97,6 +113,13 @@ class SessionSandboxRegistry:
         poll_interval:      boot 期 health 轮询间隔（秒）。
         request_timeout:    turn 流量用的 ControlClient 请求超时（秒）。
         exec_timeout:       启动命令的 exec 超时（秒）。
+        update_backoff:     forced update 失败后，本 session 暂停重试的时长（秒）。
+                            0 表示不退避（每个 turn 都重试）。
+
+    **backoff 是进程内状态**（`session_id → 单调时钟到期点`）：进程重启即遗忘，
+    多副本宿主之间也不共享，因此最坏情况是每个副本各自浪费一次失败的替换。
+    把它做成跨进程的（写 StateStore / 外部 KV）属生产化范围，不在本库的
+    source of truth 里——绑定才是。
     """
 
     def __init__(
@@ -116,11 +139,14 @@ class SessionSandboxRegistry:
         poll_interval: float = 0.25,
         request_timeout: float = 10.0,
         exec_timeout: float = 60.0,
+        update_backoff: float = DEFAULT_UPDATE_BACKOFF,
     ) -> None:
         if boot_timeout <= 0:
             raise ValueError("boot_timeout 必须 > 0")
         if poll_interval <= 0:
             raise ValueError("poll_interval 必须 > 0")
+        if update_backoff < 0:
+            raise ValueError("update_backoff 必须 >= 0")
         self._backend = backend
         self._store = store
         self._installer = installer if installer is not None else DriverInstaller()
@@ -135,6 +161,9 @@ class SessionSandboxRegistry:
         self._poll_interval = poll_interval
         self._request_timeout = request_timeout
         self._exec_timeout = exec_timeout
+        self._update_backoff = update_backoff
+        self._fingerprint: str | None = None
+        self._backoff_until: dict[str, float] = {}
 
     # -- 入口 -----------------------------------------------------------
 
@@ -151,7 +180,10 @@ class SessionSandboxRegistry:
             if client is not None:
                 self._record("sandbox_reused", session_id=session_id,
                              sandbox_id=binding.sandbox_id)
-                return binding, client
+                replaced = await self._maybe_replace(
+                    session_id, binding, client, turn_id=turn_id
+                )
+                return replaced if replaced is not None else (binding, client)
             self._record("sandbox_dead", session_id=session_id,
                          sandbox_id=binding.sandbox_id)
 
@@ -202,13 +234,140 @@ class SessionSandboxRegistry:
             return None
         return self._client(handle)
 
+    # -- forced update（M6 / 附录 I） ------------------------------------
+
+    async def _maybe_replace(
+        self,
+        session_id: str,
+        binding: SandboxHandle,
+        client: ControlClient,
+        *,
+        turn_id: str,
+    ) -> tuple[SandboxHandle, ControlClient] | None:
+        """runtime 过期就把健康的旧沙箱替换掉；不该换或换不成返回 None。
+
+        返回 None 的每一条路径都意味着"调用方拿旧沙箱照常跑这个 turn"——本方法
+        除了可能多花一次 boot 的时间之外，**不允许改变 turn 的结果**（I3）。
+        """
+        stamp = await self._store.get_stamp(session_id)
+        # stamp 缺失或 hash 为 None（legacy 绑定 / 快照烘焙）一律豁免比对：M6 不做
+        # legacy 迁移，把"不知道版本"当成"过期"会让每个老 session 白挨一次替换。
+        if stamp is None or stamp.runtime_files_hash is None:
+            return None
+        if stamp.runtime_files_hash == self._current_fingerprint():
+            return None
+        if self._in_backoff(session_id):
+            return None
+
+        # 旧沙箱是健康的，它自己就是状态的 source of truth——快照取自它的活内存，
+        # 而不是 SnapshotStore（那份可能是上一个 turn 边界的，甚至可能 mis-keyed
+        # 而根本不存在；用它恢复等于把一个空工作区当成"恢复成功"交出去）。
+        try:
+            data = await client.get_workspace()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._deny_updates(session_id)
+            self._record("forced_update_aborted", session_id=session_id,
+                         sandbox_id=binding.sandbox_id, error=repr(exc))
+            return None
+
+        started = time.monotonic()
+        try:
+            handle, new_client = await self._cold_boot(
+                session_id, turn_id=turn_id, announce=False, restore=data
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # _cold_boot 已经 kill 掉半成品；旧沙箱原封不动地继续服务本 turn。
+            self._deny_updates(session_id)
+            self._record("forced_update_failed", session_id=session_id,
+                         sandbox_id=binding.sandbox_id, error=repr(exc))
+            return None
+
+        swapped = await self._store.swap_binding(
+            session_id, binding, handle, self._stamp()
+        )
+        if not swapped:
+            # 别的执行者已经换过绑：本次 boot 出来的沙箱作废，绝不覆盖别人的绑定。
+            await self._kill_quietly(handle)
+            self._deny_updates(session_id)
+            self._record("forced_update_failed", session_id=session_id,
+                         sandbox_id=binding.sandbox_id, new_sandbox_id=handle.sandbox_id,
+                         error="binding_conflict")
+            return None
+
+        # 换绑成功之后才杀旧沙箱：在此之前它一直是绑定所指、可服务的那一个。
+        await self._kill_quietly(binding)
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        await self._announce_update(session_id, turn_id, elapsed_ms)
+        self._record("forced_update_completed", session_id=session_id,
+                     sandbox_id=handle.sandbox_id, old_sandbox_id=binding.sandbox_id,
+                     elapsed_ms=elapsed_ms)
+        return handle, new_client
+
+    async def _announce_update(
+        self, session_id: str, turn_id: str, elapsed_ms: int
+    ) -> None:
+        """update 通告只在替换成功后发（附录 I：失败路径不发 update 事件）。
+
+        换句话说它是一对"事后"通告而不是进度条：替换失败时旧沙箱照常答题，显示流
+        里不该留下任何"正在更新…"的悬空痕迹——那既不是无缝回落，也没有对应的收尾
+        事件可发。保留段的 seq 3/4 保证这两条仍排在本 turn 的 driver 事件之前。
+        """
+        await self._notify(
+            session_id, turn_id, KIND_UPDATE_STARTED, 0, SEQ_UPDATE_STARTED
+        )
+        await self._notify(
+            session_id, turn_id, KIND_UPDATE_FINISHED, elapsed_ms, SEQ_UPDATE_FINISHED
+        )
+
+    def _current_fingerprint(self) -> str:
+        """当前 runtime 的 fingerprint（进程内只算一次：文件表在进程生命期内不变）。"""
+        if self._fingerprint is None:
+            self._fingerprint = runtime_fingerprint(self._installer)
+        return self._fingerprint
+
+    def _in_backoff(self, session_id: str) -> bool:
+        deadline = self._backoff_until.get(session_id)
+        if deadline is None:
+            return False
+        if time.monotonic() >= deadline:
+            del self._backoff_until[session_id]   # 过期项就地回收，字典不无限长
+            return False
+        return True
+
+    def _deny_updates(self, session_id: str) -> None:
+        """替换失败后，这个 session 在 backoff 窗口内不再重试。
+
+        失败通常不是一次性的（新版本起不来、快照端点坏了），每个 turn 都重试一次
+        cold boot 会把"更新失败"变成"每个 turn 都慢一倍"。
+        """
+        if self._update_backoff > 0:
+            self._backoff_until[session_id] = time.monotonic() + self._update_backoff
+
     # -- cold boot ------------------------------------------------------
 
     async def _cold_boot(
-        self, session_id: str, *, turn_id: str
+        self,
+        session_id: str,
+        *,
+        turn_id: str,
+        announce: bool = True,
+        restore: bytes | None = None,
     ) -> tuple[SandboxHandle, ControlClient]:
+        """boot 一个装好 driver、恢复好工作区的新沙箱。
+
+        两个内部参数只服务于 forced update（附录 I），不属于公开面：`announce`
+        关掉 boot 通告（替换期发的是 update 通告，seq 3/4；再发 seq 1/2 会让
+        display 流回退），`restore` 用一份现成的字节绕过 SnapshotStore。
+        """
         started = time.monotonic()
-        await self._notify(session_id, turn_id, KIND_BOOT_STARTED, 0, SEQ_BOOT_STARTED)
+        if announce:
+            await self._notify(
+                session_id, turn_id, KIND_BOOT_STARTED, 0, SEQ_BOOT_STARTED
+            )
         self._record("sandbox_boot_started", session_id=session_id)
 
         # 只向宿主索取一次注入物：cold_boot_context 可能是有代价的调用，
@@ -225,7 +384,7 @@ class SessionSandboxRegistry:
             await self._start_driver(handle, dict(context.env) if context else {})
             client = self._client(handle)
             await self._await_ready(handle, started)
-            await self._restore(session_id, client)
+            await self._restore(session_id, client, restore)
         except asyncio.CancelledError:
             await self._kill_quietly(handle)
             raise
@@ -236,9 +395,10 @@ class SessionSandboxRegistry:
             raise
 
         elapsed_ms = int((time.monotonic() - started) * 1000)
-        await self._notify(
-            session_id, turn_id, KIND_BOOT_FINISHED, elapsed_ms, SEQ_BOOT_FINISHED
-        )
+        if announce:
+            await self._notify(
+                session_id, turn_id, KIND_BOOT_FINISHED, elapsed_ms, SEQ_BOOT_FINISHED
+            )
         self._record("sandbox_boot_finished", session_id=session_id,
                      sandbox_id=handle.sandbox_id, elapsed_ms=elapsed_ms)
         return handle, client
@@ -290,12 +450,25 @@ class SessionSandboxRegistry:
             + (f"（最后一次探测：{last!r}）" if last is not None else "")
         )
 
-    async def _restore(self, session_id: str, client: ControlClient) -> None:
+    async def _restore(
+        self, session_id: str, client: ControlClient, override: bytes | None = None
+    ) -> None:
         """命中快照就把工作区灌回新沙箱；未命中（首次会话）直接返回。
 
         失败原样抛出，由 `_cold_boot` 的失败路径 kill 半成品——见模块 docstring
         第四条：交出一个"看起来正常但丢了历史"的沙箱是最坏的结局。
+
+        `override` 是 forced update 从旧沙箱现取的活快照：它比 SnapshotStore 里
+        那份新，且**必然属于这个 session**，因此直接覆盖，连查都不查存储层——
+        一次 mis-keyed 的 miss 在这条路径上会静悄悄地把状态清零。
         """
+        if override is not None:
+            await client.put_workspace(override)
+            self._record(
+                "workspace_restored", session_id=session_id,
+                source="live", bytes=len(override),
+            )
+            return
         if self._snapshot_store is None or self._snapshot_key is None:
             return
         key = self._snapshot_key(session_id)
@@ -320,12 +493,12 @@ class SessionSandboxRegistry:
         )
 
     def _stamp(self) -> RuntimeStamp:
-        # runtime_files_hash 留 None：fingerprint 与比对语义归 M6 forced update，
-        # 在那之前"豁免比对"正是契约给 None 的含义（types.py）。
+        # 写入真实 fingerprint（M6）：这一条绑定的沙箱里装的就是这份文件表，
+        # 下一次 get_or_create 拿它和当时的 fingerprint 比对来决定是否替换。
         return RuntimeStamp(
             bound_at=datetime.now(timezone.utc),
             template_id=self._template,
-            runtime_files_hash=None,
+            runtime_files_hash=self._current_fingerprint(),
         )
 
     async def _kill_quietly(self, handle: SandboxHandle) -> None:

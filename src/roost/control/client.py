@@ -27,6 +27,7 @@ from ..protocol import (
     HEALTH_ENDPOINT,
     PROTOCOL_VERSION,
     TURN_ENDPOINT,
+    WORKSPACE_CONTENT_TYPE,
     WORKSPACE_ENDPOINT,
 )
 from ..types import SandboxHandle, TurnEnvelope
@@ -34,6 +35,7 @@ from .envelope import ProtocolError, decode_event, decode_json, encode_turn_byte
 
 __all__ = [
     "WORKSPACE_ENDPOINT",
+    "WORKSPACE_CONTENT_TYPE",
     "ControlClient",
     "ControlError",
     "ControlTimeoutError",
@@ -49,11 +51,10 @@ __all__ = [
 DEFAULT_WAIT_MS = 10_000
 MAX_WAIT_MS = 30_000
 
-# `WORKSPACE_ENDPOINT` 已于 M5 收尾收回 `protocol.py`（端点常量的正规归宿）；
-# 这里保留再导出，既有的 `from roost.control.client import WORKSPACE_ENDPOINT`
-# 仍然拿到同一份定义。content type 是这一端点的载荷约定，随它一起留在协议面之外
-# 没有意义，但契约只钉了端点的搬迁——不擅自扩大搬迁面。
-WORKSPACE_CONTENT_TYPE = "application/gzip"
+# `WORKSPACE_ENDPOINT` 与 `WORKSPACE_CONTENT_TYPE` 都住在 `protocol.py`（协议面的
+# 正规归宿；后者由 M6 收回，关闭附录 H 增补的遗留项）。这里保留再导出，既有的
+# `from roost.control.client import WORKSPACE_CONTENT_TYPE`（driver/server.py 与
+# 测试）仍然拿到同一份定义。
 
 STATE_ACCEPTED = "accepted"
 STATE_DUPLICATE = "duplicate"

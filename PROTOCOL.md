@@ -151,8 +151,14 @@ port, and is a useful signal for "did this sandbox restart under me".
 
 ### `POST /v1/update` — reserved
 
-Answered `501 {"error": "reserved_until_m6"}`. The endpoint exists in v1 so that the
-zero-downtime runtime update path (M6) is a behaviour change, not a protocol change.
+Answered `501 {"error": "reserved_until_m6"}`, and it stays that way: the zero-downtime
+forced update shipped in M6 is a *replacement* flow, not an in-place one. When the host
+finds a sandbox whose runtime fingerprint is stale it pulls the live workspace off the
+old sandbox, boots a new one from the current runtime files, swaps the binding with a
+CAS, and only then kills the old sandbox — none of which touches this endpoint. It
+therefore remains reserved (the error code keeps its original spelling so that already
+deployed drivers stay wire-compatible), available for a future in-place update that
+genuinely needs a protocol verb.
 
 ### `GET /v1/workspace` — download the workspace
 
