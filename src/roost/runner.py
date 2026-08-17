@@ -13,6 +13,10 @@
   产生第二次执行，也不会漏事件；循环的唯一出口是收到 Terminal。
 - **Terminal(status='error') → raise**：turn 在沙箱里失败是 turn 的终态失败，
   交给 pipeline 记 'failed'；恢复只走 sweep → requeue → 新沙箱这一条路径。
+- **备份挂在 Terminal 之后、raise 之前**（I2）：ok 与 error 都备。失败的 turn
+  同样在工作区里留下了痕迹（写了一半的文件、日志），下一个沙箱要接着它干活；
+  "只备份成功的 turn" 会让失败重试从一个更旧的世界开始。调度本身 fire-and-forget，
+  不改变本方法的返回/抛出行为。
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import time
 
+from .backup import BackupCoordinator
 from .control.client import DEFAULT_WAIT_MS, ControlClient
 from .events import DriverEvent, Terminal
 from .ports import EventSink, OpsRecorder
@@ -49,6 +54,7 @@ class SandboxTurnRunner:
     参数：
         registry:     session 到沙箱的绑定与 cold boot 编排。
         sink:         DisplayEvent 的去处（EventSink port）。
+        backup:       turn 边界的工作区备份调度器（可选；None = 不备份）。
         ops:          fire-and-forget 观测（可选）。
         wait_ms:      单次长轮询的等待上限（毫秒）。
         turn_timeout: 等待 Terminal 的总时限（秒）；None = 不设限（hang 的
@@ -60,6 +66,7 @@ class SandboxTurnRunner:
         registry: SessionSandboxRegistry,
         sink: EventSink,
         *,
+        backup: BackupCoordinator | None = None,
         ops: OpsRecorder | None = None,
         wait_ms: int = DEFAULT_WAIT_MS,
         turn_timeout: float | None = None,
@@ -68,6 +75,7 @@ class SandboxTurnRunner:
             raise ValueError("wait_ms 必须 >= 0")
         self._registry = registry
         self._sink = sink
+        self._backup = backup
         self._ops = ops
         self._wait_ms = wait_ms
         self._turn_timeout = turn_timeout
@@ -90,6 +98,8 @@ class SandboxTurnRunner:
         )
 
         terminal = await self._drain(client, turn)
+        if self._backup is not None:
+            self._backup.schedule(turn.session_id, client)
         if terminal.status != "ok":
             raise TurnFailedError(turn.turn_id, terminal.error)
 

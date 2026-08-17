@@ -16,6 +16,11 @@ session 现在有一个活着的、装好 driver 的沙箱"**，并把绑定这�
 - **换绑走 CAS**：`swap_binding(old, new)`，old 为读到的旧绑定（无绑定时 None，
   附录 A 预留的"行不存在"分支自此可达）。CAS 失败说明有别的执行者已经换过绑，
   本次 boot 出来的沙箱作废——绝不覆盖别人的绑定。
+- **恢复是 boot 的一部分，不是 boot 之后的一步**（I2）：快照在 health 就绪后、
+  返回调用方之前灌回工作区，因此"拿到手的沙箱"永远是已经恢复好的。恢复失败按
+  boot 失败处理（kill 半成品）——把一个丢了历史的空沙箱交出去，比 boot 失败更糟：
+  它会以"一切正常"的样子继续跑，然后在下一个 turn 边界把空工作区备份回去，
+  真正的状态就此丢失（备份覆盖恢复源）。
 """
 
 from __future__ import annotations
@@ -27,7 +32,15 @@ from datetime import datetime, timezone
 from .control import ControlClient, ControlError
 from .events import LifecycleNotice
 from .install import DriverInstaller
-from .ports import EventSink, OpsRecorder, SandboxBackend, SessionContextProvider, StateStore
+from .ports import (
+    EventSink,
+    OpsRecorder,
+    SandboxBackend,
+    SessionContextProvider,
+    SnapshotKeyFn,
+    SnapshotStore,
+    StateStore,
+)
 from .reducer import reduce_event
 from .types import RuntimeStamp, SandboxHandle, SessionBootContext
 
@@ -73,6 +86,11 @@ class SessionSandboxRegistry:
         context_provider:   宿主的 cold boot 注入物来源（可选）。
         sink:               boot lifecycle 通告的去处（可选）。
         ops:                fire-and-forget 观测（可选）。
+        snapshot_store:     工作区快照的来源（可选）。
+        snapshot_key:       session_id → 快照 key（可选）。与 snapshot_store 成对
+                            出现才启用恢复；缺任一则持久化整体禁用（半套配置
+                            按"没配"处理，而不是按"配错了"报错——它可能就是宿主
+                            在 M4 之前的既有装配）。
         template:           create 时使用的模板/镜像（None = backend 默认）。
         boot_timeout:       cold boot 到 health 就绪的总时限（秒）。
         health_timeout:     单次 health 探测的超时（秒）——复用路径要"快速失败"。
@@ -90,6 +108,8 @@ class SessionSandboxRegistry:
         context_provider: SessionContextProvider | None = None,
         sink: EventSink | None = None,
         ops: OpsRecorder | None = None,
+        snapshot_store: SnapshotStore | None = None,
+        snapshot_key: SnapshotKeyFn | None = None,
         template: str | None = None,
         boot_timeout: float = DEFAULT_BOOT_TIMEOUT,
         health_timeout: float = 2.0,
@@ -107,6 +127,8 @@ class SessionSandboxRegistry:
         self._context_provider = context_provider
         self._sink = sink
         self._ops = ops
+        self._snapshot_store = snapshot_store
+        self._snapshot_key = snapshot_key
         self._template = template
         self._boot_timeout = boot_timeout
         self._health_timeout = health_timeout
@@ -191,6 +213,7 @@ class SessionSandboxRegistry:
             await self._start_driver(handle, dict(context.env) if context else {})
             client = self._client(handle)
             await self._await_ready(handle, started)
+            await self._restore(session_id, client)
         except asyncio.CancelledError:
             await self._kill_quietly(handle)
             raise
@@ -253,6 +276,24 @@ class SessionSandboxRegistry:
         raise BootTimeoutError(
             f"沙箱 {handle.sandbox_id!r} 在 {self._boot_timeout}s 内未就绪"
             + (f"（最后一次探测：{last!r}）" if last is not None else "")
+        )
+
+    async def _restore(self, session_id: str, client: ControlClient) -> None:
+        """命中快照就把工作区灌回新沙箱；未命中（首次会话）直接返回。
+
+        失败原样抛出，由 `_cold_boot` 的失败路径 kill 半成品——见模块 docstring
+        第四条：交出一个"看起来正常但丢了历史"的沙箱是最坏的结局。
+        """
+        if self._snapshot_store is None or self._snapshot_key is None:
+            return
+        key = self._snapshot_key(session_id)
+        data = await self._snapshot_store.get(key)
+        if data is None:
+            self._record("workspace_restore_missed", session_id=session_id, key=key)
+            return
+        await client.put_workspace(data)
+        self._record(
+            "workspace_restored", session_id=session_id, key=key, bytes=len(data)
         )
 
     # -- 辅助 -----------------------------------------------------------

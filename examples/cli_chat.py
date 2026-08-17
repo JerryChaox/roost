@@ -13,6 +13,12 @@ agent 仍然只答一次。
 `sha256(session_id + 行序号 + 文本)`，确定性派生意味着"同一条消息重投多少次都是
 同一个 turn"，幂等因此可能成立。
 
+它同时是 **Demo 2（持久化）** 的人工入口：`--counter` 让每条消息去递增沙箱工作区里
+的计数器，`/kill` 当场 `docker rm -f` 掉沙箱；下一条消息会 cold boot 一个新沙箱、
+把上一次的工作区快照灌回去，计数器因此**续增**而不是从 1 重来。
+
+    .venv/bin/python examples/cli_chat.py --counter --snapshot-dir /tmp/roost-snap
+
 M3b 的沙箱里跑的是 EchoHarness（回显 payload），所以 Demo 1 验的是投递与执行的
 语义，与 LLM 无关；真实 Claude Agent SDK harness 归 M3c。
 """
@@ -30,11 +36,13 @@ if __package__ in (None, ""):  # 直接 `python examples/cli_chat.py` 时也能�
 
 from roost import (  # noqa: E402
     KIND_LIFECYCLE_NOTICE,
+    BackupCoordinator,
     KIND_TERMINAL,
     KIND_TEXT,
     KIND_TOOL,
     DisplayEvent,
     DockerSandboxBackend,
+    FileSnapshotStore,
     InProcessTurnDelivery,
     SandboxTurnRunner,
     SessionSandboxRegistry,
@@ -45,6 +53,12 @@ from roost import (  # noqa: E402
 
 DEFAULT_SESSION = "cli-demo"
 DEFAULT_IMAGE = "python:3.12-slim"
+DEFAULT_SNAPSHOT_DIR = ".roost-snapshots"
+
+
+def snapshot_key(session_id: str) -> str:
+    """SnapshotKeyFn：session → 存储 key。**宿主的决定**——库对 key 结构不作解释。"""
+    return f"workspace/{session_id}.tar.gz"
 
 
 class ConsoleSink:
@@ -101,17 +115,27 @@ async def chat(args: argparse.Namespace) -> int:
     backend = DockerSandboxBackend(image=args.image)
     store = SQLiteStateStore(args.db)
     sink = ConsoleSink()
+    snapshots = FileSnapshotStore(args.snapshot_dir)
+    backup = BackupCoordinator(snapshots, snapshot_key)
     registry = SessionSandboxRegistry(
-        backend, store, sink=sink, template=args.image, boot_timeout=args.boot_timeout
+        backend,
+        store,
+        sink=sink,
+        snapshot_store=snapshots,
+        snapshot_key=snapshot_key,
+        template=args.image,
+        boot_timeout=args.boot_timeout,
     )
-    runner = SandboxTurnRunner(registry, sink)
+    runner = SandboxTurnRunner(registry, sink, backup=backup)
     delivery = InProcessTurnDelivery(duplicate_factor=2 if args.duplicate else 1)
     processor = TurnProcessor(store, runner, delivery=delivery)
     delivery.start(processor.process)
 
     print(
         f"roost demo — session={args.session} backend=docker image={args.image}"
-        + ("  [每条消息双投]" if args.duplicate else ""),
+        f" snapshots={args.snapshot_dir}"
+        + ("  [每条消息双投]" if args.duplicate else "")
+        + ("  [counter]" if args.counter else ""),
         flush=True,
     )
 
@@ -122,19 +146,45 @@ async def chat(args: argparse.Namespace) -> int:
                 continue
             if text in {"/quit", "/exit"}:
                 break
+            if text == "/kill":
+                await _kill_sandbox(backend, store, args.session)
+                continue
             turn = TurnEnvelope(
                 turn_id=derive_turn_id(args.session, index, text),
                 session_id=args.session,
-                payload={"text": text},
+                payload={"text": text, "counter": True} if args.counter else {"text": text},
             )
             if args.message:            # 非交互模式没有 input() 的回显，自己打一行
                 print(f"you> {text}", flush=True)
             await delivery.enqueue(turn)
             await delivery.join()
+            # 备份是 fire-and-forget 的（turn 从不等它）；demo 在这里等一下，是为了
+            # 让紧接着的 /kill 有一份确定已经写好的快照可恢复。真实宿主不该这么做。
+            await backup.drain()
     finally:
         await delivery.stop()
+        await backup.drain()
         await _cleanup(backend, store, args)
     return 0
+
+
+async def _kill_sandbox(
+    backend: DockerSandboxBackend, store: SQLiteStateStore, session_id: str
+) -> None:
+    """`/kill`：当场销毁当前沙箱（Demo 2 的"沙箱是一次性的"那一半）。
+
+    刻意**不动绑定行**：绑定指向一个已经不存在的容器，正是下一个 turn 要处理的
+    现实——registry 的 health 探测会发现它死了，然后 cold boot + 恢复快照。
+    """
+    binding = await store.get_binding(session_id)
+    if binding is None:
+        print("[kill] 当前没有绑定的沙箱", flush=True)
+        return
+    print(f"[kill] docker rm -f {binding.sandbox_id[:12]}", flush=True)
+    try:
+        await backend.kill(binding)
+    except Exception as exc:
+        print(f"[kill] 失败：{exc!r}", flush=True)
 
 
 def _lines(messages: list[str]):
@@ -179,6 +229,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--db", default=None, help="SQLite 文件路径（默认内存库）")
     parser.add_argument(
         "--duplicate", action="store_true", help="每条消息投递两次（Demo 1）"
+    )
+    parser.add_argument(
+        "--counter", action="store_true",
+        help="每条消息递增工作区计数器（Demo 2：配合 /kill 看它跨沙箱续增）",
+    )
+    parser.add_argument(
+        "--snapshot-dir", default=DEFAULT_SNAPSHOT_DIR, help="工作区快照目录"
     )
     parser.add_argument(
         "--message", action="append", default=[], help="非交互模式的消息（可重复）"

@@ -154,6 +154,43 @@ port, and is a useful signal for "did this sandbox restart under me".
 Answered `501 {"error": "reserved_until_m6"}`. The endpoint exists in v1 so that the
 zero-downtime runtime update path (M6) is a behaviour change, not a protocol change.
 
+### `GET /v1/workspace` — download the workspace
+
+Returns the workspace directory as a gzipped tar archive.
+
+```
+200 OK
+Content-Type: application/gzip
+<tar.gz bytes>
+```
+
+Member names are paths relative to the workspace root, with no leading `./`. An empty
+or absent workspace answers a valid empty archive — "there is no workspace" and "the
+workspace is empty" are the same answer to whoever restores it. Packing failures
+answer `500 {"error": "workspace_pack_failed"}`.
+
+### `PUT /v1/workspace` — restore the workspace
+
+Body is a gzipped tar archive, unpacked **over** the workspace directory: members
+overwrite same-named files, and existing files not present in the archive are left
+alone. Answers `200 {"ok": true}`.
+
+Every member is validated before anything is written, so a rejected archive leaves
+the workspace untouched:
+
+- member names must be relative, must not be absolute, and must not escape the
+  workspace via `..`;
+- only directories and regular files are accepted. Symlinks, devices and FIFOs are
+  refused, because their escape hatch is the link target rather than the member name,
+  and `GET` does not emit them either — the two directions carry the same member set.
+
+A violation answers `400 {"error": "unsafe_archive"}`; a corrupt or unreadable archive
+answers `500 {"error": "workspace_unpack_failed"}`.
+
+Persistence deliberately rides the control plane rather than a `download` method on
+the host's sandbox backend port: every backend already has to provide an HTTP channel
+to the driver, and nothing about backup needs a second transport.
+
 ## 4. The idempotency contract
 
 This section is the reason the project exists; it is normative.
@@ -205,6 +242,11 @@ left implicit:
 
   This line is the only race-free way to learn the port when it was assigned
   dynamically. Callers that pinned the port may instead poll `/v1/health`.
+- `ROOST_WORKSPACE_DIR` selects the workspace directory (default `/workspace`), and
+  the driver makes sure it exists at startup. Failing to create it is a warning on
+  stderr, not a startup failure: the driver's job is to accept turns, and a host that
+  will not hand out that directory should still get a working control plane (the
+  workspace endpoints then answer `500`).
 - Turns execute on a **single FIFO worker**. There is no concurrency inside a driver:
   a sandbox hosts one session, and a session runs one turn at a time. The host has
   its own serialisation gate — the redundancy is intentional, since the driver does
@@ -221,9 +263,12 @@ left implicit:
 | `400` | `{"error": "unsupported_protocol_version"}` | version header missing or unrecognised |
 | `400` | `{"error": "invalid_body"}` | body is not a valid turn envelope |
 | `400` | `{"error": "invalid_query"}` | `after` / `wait_ms` not parseable |
+| `400` | `{"error": "unsafe_archive"}` | workspace archive member escapes the directory or is not a file/directory |
 | `404` | `{"error": "unknown_turn"}` | this process has no entry for that `turn_id` |
 | `404` | `{"error": "not_found"}` | no such endpoint |
 | `405` | `{"error": "method_not_allowed"}` | endpoint exists, method does not |
+| `500` | `{"error": "workspace_pack_failed"}` | workspace could not be archived |
+| `500` | `{"error": "workspace_unpack_failed"}` | workspace archive could not be unpacked |
 | `501` | `{"error": "reserved_until_m6"}` | `/v1/update`, reserved |
 
 Clients must treat any other non-`200` status as a transport-level failure and

@@ -14,10 +14,13 @@
 
 from __future__ import annotations
 
+import os
 import time
+from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
+from ..control.client import WORKSPACE_CONTENT_TYPE, WORKSPACE_ENDPOINT
 from ..control.envelope import (
     ProtocolError,
     decode_turn_bytes,
@@ -36,6 +39,13 @@ from .harness import Harness
 from .httpd import HttpServer, Request, Response
 from .registry import TurnRegistry
 from .worker import TurnWorker
+from .workspace import (
+    UnsafeArchiveError,
+    ensure_workspace_dir,
+    pack_directory,
+    unpack_into,
+    workspace_dir_from_env,
+)
 
 __all__ = ["ControlServer", "DEFAULT_WAIT_MS", "MAX_WAIT_MS"]
 
@@ -55,7 +65,11 @@ class ControlServer:
         *,
         host: str = "127.0.0.1",
         port: int = 8787,
+        workspace_dir: str | os.PathLike[str] | None = None,
     ) -> None:
+        self._workspace_dir = (
+            workspace_dir_from_env() if workspace_dir is None else Path(workspace_dir)
+        )
         self._registry = TurnRegistry()
         self._events = EventLog()
         self._worker = TurnWorker(harness, self._registry, self._events)
@@ -65,6 +79,10 @@ class ControlServer:
     @property
     def port(self) -> int:
         return self._http.port
+
+    @property
+    def workspace_dir(self) -> Path:
+        return self._workspace_dir
 
     async def start(self) -> None:
         self._started_at = time.monotonic()
@@ -91,6 +109,12 @@ class ControlServer:
             return self._route(request, "GET", self._health)
         if path == UPDATE_ENDPOINT:
             return self._route(request, "POST", self._update)
+        if path == WORKSPACE_ENDPOINT:
+            if request.method == "GET":
+                return self._get_workspace(request)
+            if request.method == "PUT":
+                return self._put_workspace(request)
+            return _json(405, {"error": "method_not_allowed"})
         if path.startswith(_TURN_PREFIX) and path.endswith(_EVENTS_SUFFIX):
             if request.method != "GET":
                 return _json(405, {"error": "method_not_allowed"})
@@ -155,6 +179,32 @@ class ControlServer:
                 "harness_ready": self._worker.ready,
             },
         )
+
+    def _get_workspace(self, _request: Request) -> Response:
+        """工作区目录 → tar.gz。打包失败一律 500：宿主唯一能做的决定是"这次备份没成"。"""
+        try:
+            data = pack_directory(self._workspace_dir)
+        except Exception:                       # noqa: BLE001 —— 见 docstring
+            return _json(500, {"error": "workspace_pack_failed"})
+        return Response(
+            status=200,
+            body=data,
+            headers={
+                "Content-Type": WORKSPACE_CONTENT_TYPE,
+                HEADER_PROTOCOL_VERSION: PROTOCOL_VERSION,
+            },
+        )
+
+    def _put_workspace(self, request: Request) -> Response:
+        """tar.gz → 工作区目录。逃逸/不受支持的成员 400，其余失败 500。"""
+        try:
+            ensure_workspace_dir(self._workspace_dir)
+            unpack_into(request.body, self._workspace_dir)
+        except UnsafeArchiveError:
+            return _json(400, {"error": "unsafe_archive"})
+        except Exception:                       # noqa: BLE001 —— 见 docstring
+            return _json(500, {"error": "workspace_unpack_failed"})
+        return _json(200, {"ok": True})
 
     def _update(self, _request: Request) -> Response:
         # M2 只保留协议位；行为归 M6（零停机 forced update）。

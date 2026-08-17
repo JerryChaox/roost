@@ -32,6 +32,7 @@ from ..types import SandboxHandle, TurnEnvelope
 from .envelope import ProtocolError, decode_event, decode_json, encode_turn_bytes
 
 __all__ = [
+    "WORKSPACE_ENDPOINT",
     "ControlClient",
     "ControlError",
     "ControlTimeoutError",
@@ -46,6 +47,12 @@ __all__ = [
 
 DEFAULT_WAIT_MS = 10_000
 MAX_WAIT_MS = 30_000
+
+# 协议 v1 的 workspace 端点（附录 G）。它的正规归宿是 `protocol.py` 里的端点常量组；
+# 放在这里是因为 M4 的改动面明确不含 protocol.py，driver 侧从这里引用（driver →
+# control 是既有的依赖方向：server.py 已经引 control/envelope.py），双端仍是同一份。
+WORKSPACE_ENDPOINT = "/v1/workspace"
+WORKSPACE_CONTENT_TYPE = "application/gzip"
 
 STATE_ACCEPTED = "accepted"
 STATE_DUPLICATE = "duplicate"
@@ -183,6 +190,43 @@ class ControlClient:
             harness_ready=bool(obj.get("harness_ready", False)),
         )
 
+    # ---- workspace（M4 持久化；附录 G） --------------------------------------
+
+    async def get_workspace(self, *, timeout_seconds: float | None = None) -> bytes:
+        """取回工作区目录的 tar.gz 字节。空工作区返回一个合法的空归档。
+
+        刻意返回原始字节而不做任何解释：宿主只把它交给 SnapshotStore，归档的结构
+        是沙箱侧与沙箱侧之间的约定（driver/workspace.py），host 层不参与。
+        """
+        status, body = await self._request(
+            "GET", WORKSPACE_ENDPOINT, timeout_seconds=timeout_seconds
+        )
+        if status != 200:
+            raise ControlError(
+                f"{WORKSPACE_ENDPOINT} 返回 {status}"
+                + (f"（{code}）" if (code := _error_code(body)) else ""),
+                status=status,
+            )
+        return body
+
+    async def put_workspace(
+        self, data: bytes, *, timeout_seconds: float | None = None
+    ) -> None:
+        """把 tar.gz 字节解包覆盖进沙箱的工作区目录。"""
+        status, body = await self._request(
+            "PUT",
+            WORKSPACE_ENDPOINT,
+            body=data,
+            content_type=WORKSPACE_CONTENT_TYPE,
+            timeout_seconds=timeout_seconds,
+        )
+        if status != 200:
+            raise ControlError(
+                f"{WORKSPACE_ENDPOINT} 返回 {status}"
+                + (f"（{code}）" if (code := _error_code(body)) else ""),
+                status=status,
+            )
+
     # ---- 传输 ---------------------------------------------------------------
 
     async def _request(
@@ -191,11 +235,12 @@ class ControlClient:
         path: str,
         *,
         body: bytes | None = None,
+        content_type: str = "application/json",
         timeout_seconds: float | None = None,
     ) -> tuple[int, bytes]:
         headers = {HEADER_PROTOCOL_VERSION: PROTOCOL_VERSION}
         if body is not None:
-            headers["Content-Type"] = "application/json"
+            headers["Content-Type"] = content_type
         try:
             return await self._backend.request(
                 self._handle,

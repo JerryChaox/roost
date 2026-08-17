@@ -24,6 +24,7 @@ from .control import (
     encode_turn,
 )
 from .backends import DockerSandboxBackend
+from .backup import BackupCoordinator
 from .delivery import InProcessTurnDelivery
 from .events import (
     Delta,
@@ -129,6 +130,8 @@ __all__ = [
     "TurnSubmission",
     "EventPage",
     "HealthStatus",
+    # M4 持久化整合（工作区备份/恢复）
+    "BackupCoordinator",
     # M3b 编排（cold boot / reducer / turn runner）
     "DriverInstaller",
     "SessionSandboxRegistry",

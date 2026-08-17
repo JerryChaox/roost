@@ -9,6 +9,10 @@ docker 的端口发布把宿主端口转发到**容器网卡**，只监听容器
 沙箱边界仍在，backend 只把端口发布到宿主的 127.0.0.1。E2B 一类自带代理的 backend
 维持默认的 loopback 绑定即可。
 
+工作区目录经 `ROOST_WORKSPACE_DIR`（默认 `/workspace`），启动时确保存在——它是
+`/v1/workspace` 备份/恢复的对象（附录 G）。创建失败只告警不退出：driver 的职责是
+接 turn，"这台机器不给建目录"不该让协议面整个起不来。
+
 M2 的 harness 是 `EchoHarness`；真实 Claude Agent SDK harness 归 M3，届时只换
 这里注入的实现，server/worker/registry 无需改动。
 
@@ -27,6 +31,7 @@ import sys
 from ..protocol import DEFAULT_CONTROL_PORT, ENV_PREFIX
 from .harness import EchoHarness
 from .server import ControlServer
+from .workspace import ensure_workspace_dir, workspace_dir_from_env
 
 __all__ = ["main"]
 
@@ -37,9 +42,23 @@ HOST = "127.0.0.1"
 
 
 async def _serve(port: int, host: str) -> None:
-    server = ControlServer(EchoHarness(), host=host, port=port)
+    workspace = workspace_dir_from_env()
+    workspace_warning: str | None = None
+    try:
+        ensure_workspace_dir(workspace)
+    except OSError as exc:
+        # 创建不了就继续起服务，只是 workspace 端点会报错。driver 的存在理由是接
+        # turn，不是管目录；把"没有工作区"变成"driver 起不来"会让一台不该持久化的
+        # 机器（比如只读根的开发机）连协议面都起不来。
+        workspace_warning = f"warning: 无法创建工作区目录 {workspace}：{exc!r}"
+
+    server = ControlServer(EchoHarness(), host=host, port=port, workspace_dir=workspace)
     await server.start()
     print(f"roost-driver listening on {host}:{server.port}", flush=True)
+    # 告警压在就绪行之后：**输出的第一行是就绪行**是协议承诺（PROTOCOL.md §5），
+    # 调用方靠它取端口，任何抢在它前面的诊断输出都会被当成就绪行。
+    if workspace_warning is not None:
+        print(workspace_warning, file=sys.stderr, flush=True)
 
     loop = asyncio.get_running_loop()
     stopping = asyncio.Event()
