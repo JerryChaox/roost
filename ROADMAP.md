@@ -19,8 +19,10 @@ demo。M1–M6 是串行主线，M7 起并行度放开。
 | M6 | 零停机 forced update | runtime fingerprint、内存快照换绑、失败回退 + backoff | **Demo 3：对话中升级 runtime 用户无感；注入升级失败，回退旧沙箱正常应答**（I3） |
 | M7 | E2B backend | E2B SandboxBackend（create / connect 隐含恢复 / pause） | 三个 demo 在 E2B 原样通过——backend 可插拔实证 |
 | M8 | 0.1 公开发布 | README 完整（三 demo 录屏）、PROTOCOL.md 定稿、示例宿主、CI、PyPI | `pip install roost` 十分钟跑通 Demo 1；公开发布贴 |
-| M9 | 生产反向采纳 | 上游宿主（museon agents）以 roost 为依赖实现六 port，上 staging | 真实 IM 对话跑在 roost 内核上——生产级 API 硬化 |
+| M9 | 生产反向采纳 | 上游宿主（museon agents）以 roost 为依赖实现六 port，上 staging | 真实 IM 对话跑在 roost 内核上——生产级 API 硬化。**前置：M11、M12** |
 | M10 | 生态扩展 | IM 桥可选 backend、Cloud Tasks / GCS adapter 小包、第二 harness | 按需求排优先级，不预先承诺 |
+| M11 | 多消费者与 Postgres | session 级 advisory lock（关闭 M1 的单消费者串行化边界）、Postgres StateStore | 多 worker 并发消费下同 session 两个不同 turn 不并跑（既有契约套件跑通 Postgres 实现） |
+| M12 | 生产级 watchdog 语义 | 以生产实现为 spec 逐条复刻：watch 状态机（密集/long-watch 节奏）、silence/syscall defer、turn_age 判定、kill/requeue 决策面、零写入观测纪律 | 每条语义带上其对应的生产事故动机；spec 逐条核对通过。生产 watchdog 跑的都是实际问题，不做"按需再长"的赌注 |
 
 ## M2 目标模块结构（预铺，开工时细化）
 
