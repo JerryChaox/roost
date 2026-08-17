@@ -528,3 +528,43 @@ hang 的定义：turn 已提交、driver 事件流在 `stall_timeout` 内颗粒�
   `watchdog_sweep_failed` / `watchdog_requeue_failed` ops 事件名采纳。
 - 遗留：`WORKSPACE_CONTENT_TYPE` 仍在 control/client.py，随下次触碰该文件的
   里程碑一并收回 protocol.py。
+
+## 附录 I：M6 零停机 forced update 契约（2026-08-17 钉定）
+
+### Fingerprint
+
+- `src/roost/fingerprint.py`：`runtime_fingerprint(installer) -> str`——对
+  DriverInstaller 文件表（路径排序 + 内容）计算 sha256。这是"沙箱内运行时是否
+  过期"的唯一判据。
+- `sessions.py` cold boot 的 bind/swap 从此写入真实
+  `RuntimeStamp(runtime_files_hash=fingerprint)`（终结 M3b 的 None 占位）。
+
+### 触发与流程（get_or_create 内，复用路径命中健康沙箱时）
+
+1. 触发条件：stamp.runtime_files_hash 非 None 且 ≠ 当前 fingerprint，且该
+   session 不在 backoff 中。stamp 为 None（legacy/快照烘焙）不触发（M6 内不
+   处理 legacy 迁移）。
+2. 替换式更新（不走 /v1/update，端点维持 501 reserved，PROTOCOL.md 措辞同步）：
+   旧沙箱是健康的、是状态的 source of truth——`get_workspace`（对旧 driver）
+   取**活内存快照** → cold boot 新沙箱并以这份字节恢复（绕过 SnapshotStore，
+   防 mis-keyed 快照空启动）→ health 就绪 → `swap_binding(old, new)` CAS
+   原子换绑 → 换绑成功后才 kill 旧沙箱。
+3. **失败永不伤 turn**（I3）：任一步失败（取快照失败 / 新沙箱 boot 失败 /
+   CAS 失败）→ kill 新半成品、旧沙箱保持绑定并照常服务本 turn、写入
+   per-session backoff（进程内 dict，默认 1800s，构造参数可调；跨进程 backoff
+   属生产化范围，文档注明）。ops 记 `forced_update_aborted`（快照失败）/
+   `forced_update_failed`（boot/CAS 失败）/ `forced_update_completed`。
+4. lifecycle notice：`update_started`（保留段 seq=3）/ `update_finished`
+   （seq=4），挂当前 turn 流；失败路径不发 update 事件（旧沙箱继续答题，
+   状态无缝回落）。
+
+### 验收测试
+
+- fingerprint 单测：文件表内容/路径变化 → 变；顺序无关。
+- e2e（真 docker）：turn1 counter=1 于沙箱 A → 用注入的 fingerprint 差异构造
+  "新版本" registry → turn2：update notices 出现、执行于新沙箱 B（sandbox_id
+  变化）、counter=2（状态经活快照延续）、A 已销毁、stamp 更新为新 fingerprint。
+- 失败回退 e2e：注入新沙箱 boot 必败 → turn2 仍在 A 上正常答复（counter 照增）、
+  A 仍绑定、backoff 生效（turn3 在 backoff 窗口内不再尝试更新，ops 无第二次
+  forced_update_*）。
+- swap CAS 失败路径单测（fake store）：新沙箱被 kill、不覆盖他人绑定。
