@@ -13,6 +13,10 @@ agent 仍然只答一次。
 `sha256(session_id + 行序号 + 文本)`，确定性派生意味着"同一条消息重投多少次都是
 同一个 turn"，幂等因此可能成立。
 
+它同时是 **Demo 3（卡死恢复）** 的人工入口：短 `--stall-timeout/--lock-seconds`
+配合消息里的 `hang_on_attempt`（EchoHarness 的挂起注入）能看到完整的一条恢复链——
+沙箱被杀、turn 被 watchdog 重投、答案由新沙箱给出。
+
 它同时是 **Demo 2（持久化）** 的人工入口：`--counter` 让每条消息去递增沙箱工作区里
 的计数器，`/kill` 当场 `docker rm -f` 掉沙箱；下一条消息会 cold boot 一个新沙箱、
 把上一次的工作区快照灌回去，计数器因此**续增**而不是从 1 重来。
@@ -49,6 +53,7 @@ from roost import (  # noqa: E402
     SQLiteStateStore,
     TurnEnvelope,
     TurnProcessor,
+    Watchdog,
 )
 
 DEFAULT_SESSION = "cli-demo"
@@ -126,10 +131,16 @@ async def chat(args: argparse.Namespace) -> int:
         template=args.image,
         boot_timeout=args.boot_timeout,
     )
-    runner = SandboxTurnRunner(registry, sink, backup=backup)
+    runner = SandboxTurnRunner(
+        registry, sink, backup=backup, stall_timeout=args.stall_timeout
+    )
     delivery = InProcessTurnDelivery(duplicate_factor=2 if args.duplicate else 1)
-    processor = TurnProcessor(store, runner, delivery=delivery)
+    processor = TurnProcessor(store, runner, delivery=delivery, lock_seconds=args.lock_seconds)
     delivery.start(processor.process)
+    # Demo 3（卡死恢复）：沙箱里的 turn 挂死时，runner 杀沙箱、pipeline 放手，
+    # 锁过期后由这个 watchdog 把 turn 重投给一个新沙箱。它是**唯一**的重投发起者。
+    watchdog = Watchdog(store, delivery, interval=args.watchdog_interval)
+    watchdog.start()
 
     print(
         f"roost demo — session={args.session} backend=docker image={args.image}"
@@ -149,19 +160,32 @@ async def chat(args: argparse.Namespace) -> int:
             if text == "/kill":
                 await _kill_sandbox(backend, store, args.session)
                 continue
+            payload: dict = {"text": text}
+            if args.counter:
+                payload["counter"] = True
+            if args.hang_first:
+                # EchoHarness 的挂起注入：第一次尝试一个事件都不发（Demo 3）。
+                payload["hang_on_attempt"] = 1
             turn = TurnEnvelope(
                 turn_id=derive_turn_id(args.session, index, text),
                 session_id=args.session,
-                payload={"text": text, "counter": True} if args.counter else {"text": text},
+                payload=payload,
             )
             if args.message:            # 非交互模式没有 input() 的回显，自己打一行
                 print(f"you> {text}", flush=True)
             await delivery.enqueue(turn)
             await delivery.join()
+            if args.hang_first:
+                # 挂死的那一次结束时 turn 还没有答案：锁要先过期，watchdog 才看得见它。
+                # 真实宿主不会这样等——它只管发消息，答案随事件流异步到达。
+                print("[demo] 等待锁过期 → watchdog requeue → 新沙箱重跑…", flush=True)
+                await asyncio.sleep(args.lock_seconds + args.watchdog_interval * 2)
+                await delivery.join()
             # 备份是 fire-and-forget 的（turn 从不等它）；demo 在这里等一下，是为了
             # 让紧接着的 /kill 有一份确定已经写好的快照可恢复。真实宿主不该这么做。
             await backup.drain()
     finally:
+        await watchdog.stop()
         await delivery.stop()
         await backup.drain()
         await _cleanup(backend, store, args)
@@ -241,6 +265,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--message", action="append", default=[], help="非交互模式的消息（可重复）"
     )
     parser.add_argument("--boot-timeout", type=float, default=60.0, help="cold boot 时限（秒）")
+    parser.add_argument(
+        "--stall-timeout", type=float, default=60.0,
+        help="事件流停滞多久算沙箱卡死（秒；Demo 3 配合 payload 的 hang_on_attempt 用）",
+    )
+    parser.add_argument("--lock-seconds", type=int, default=30, help="turn 锁时长（秒）")
+    parser.add_argument(
+        "--hang-first", action="store_true",
+        help="每条消息的第一次尝试在沙箱里挂死（Demo 3：看卡死→重投→新沙箱答复）",
+    )
+    parser.add_argument(
+        "--watchdog-interval", type=float, default=5.0, help="watchdog sweep 间隔（秒）"
+    )
     parser.add_argument(
         "--keep-sandbox", action="store_true", help="退出时保留容器（排障用）"
     )

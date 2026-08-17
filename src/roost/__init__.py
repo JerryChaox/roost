@@ -55,6 +55,7 @@ from .protocol import (
     PROTOCOL_VERSION,
     TURN_ENDPOINT,
     UPDATE_ENDPOINT,
+    WORKSPACE_ENDPOINT,
 )
 from .reducer import (
     KIND_LIFECYCLE_NOTICE,
@@ -66,7 +67,12 @@ from .reducer import (
     reduce_event,
     reduce_events,
 )
-from .runner import SandboxTurnRunner, TurnFailedError, TurnStreamTimeoutError
+from .runner import (
+    DEFAULT_STALL_TIMEOUT,
+    SandboxTurnRunner,
+    TurnFailedError,
+    TurnStalledError,
+)
 from .sessions import (
     BindingConflictError,
     BootError,
@@ -75,6 +81,7 @@ from .sessions import (
 )
 from .snapshot import FileSnapshotStore, S3Error, S3SnapshotStore
 from .store import SQLiteStateStore
+from .watchdog import Watchdog
 from .types import (
     RuntimeStamp,
     SandboxHandle,
@@ -140,7 +147,10 @@ __all__ = [
     "BindingConflictError",
     "SandboxTurnRunner",
     "TurnFailedError",
-    "TurnStreamTimeoutError",
+    # M5 watchdog 与 liveness
+    "TurnStalledError",
+    "DEFAULT_STALL_TIMEOUT",
+    "Watchdog",
     "reduce_event",
     "reduce_events",
     "driver_display_seq",
@@ -157,5 +167,6 @@ __all__ = [
     "TURN_ENDPOINT",
     "HEALTH_ENDPOINT",
     "UPDATE_ENDPOINT",
+    "WORKSPACE_ENDPOINT",
     "DEFAULT_CONTROL_PORT",
 ]

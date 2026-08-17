@@ -27,6 +27,7 @@ from ..protocol import (
     HEALTH_ENDPOINT,
     PROTOCOL_VERSION,
     TURN_ENDPOINT,
+    WORKSPACE_ENDPOINT,
 )
 from ..types import SandboxHandle, TurnEnvelope
 from .envelope import ProtocolError, decode_event, decode_json, encode_turn_bytes
@@ -48,10 +49,10 @@ __all__ = [
 DEFAULT_WAIT_MS = 10_000
 MAX_WAIT_MS = 30_000
 
-# 协议 v1 的 workspace 端点（附录 G）。它的正规归宿是 `protocol.py` 里的端点常量组；
-# 放在这里是因为 M4 的改动面明确不含 protocol.py，driver 侧从这里引用（driver →
-# control 是既有的依赖方向：server.py 已经引 control/envelope.py），双端仍是同一份。
-WORKSPACE_ENDPOINT = "/v1/workspace"
+# `WORKSPACE_ENDPOINT` 已于 M5 收尾收回 `protocol.py`（端点常量的正规归宿）；
+# 这里保留再导出，既有的 `from roost.control.client import WORKSPACE_ENDPOINT`
+# 仍然拿到同一份定义。content type 是这一端点的载荷约定，随它一起留在协议面之外
+# 没有意义，但契约只钉了端点的搬迁——不擅自扩大搬迁面。
 WORKSPACE_CONTENT_TYPE = "application/gzip"
 
 STATE_ACCEPTED = "accepted"

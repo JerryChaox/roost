@@ -73,9 +73,13 @@ class SQLiteStateStore:
         path: str | os.PathLike[str] | None = None,
         *,
         now: Callable[[], float] = time.time,
+        redelivery_grace_seconds: float = 30.0,
     ) -> None:
+        if redelivery_grace_seconds <= 0:
+            raise ValueError("redelivery_grace_seconds 必须 > 0")
         self._path = ":memory:" if path is None else os.fspath(path)
         self._now = now
+        self._redelivery_grace_seconds = redelivery_grace_seconds
         self._conn: sqlite3.Connection | None = None
         self._closed = False
         self._executor = ThreadPoolExecutor(
@@ -321,10 +325,16 @@ class SQLiteStateStore:
         await self._run(_finish)
 
     async def sweep_due_turns(self, *, limit: int) -> list[TurnEnvelope]:
-        """锁过期且未完成的 turn，转 requeued 并返回，供 watchdog 重投。
+        """到期未完成的 turn，转/保持 requeued 并返回，供 watchdog 重投。
 
         选出与转状态在**单事务**内完成，否则并发 watchdog 会重复认领同一批。
         返回的 attempt 是行内原值；+1 由投递方重投时负责。
+
+        谓词是 `status IN ('running','requeued') AND locked_until <= now`：
+        标记 requeued 时同步把 locked_until 推到 now + redelivery_grace——它在
+        requeued 状态下的含义是**重投期限**。若 sweep 之后 enqueue 失败或宿主
+        崩溃（sweep 与重投之间没有原子性），该行会在期限到期后被再次扫出，
+        搁浅自愈；重复重投由 begin_turn 的接管语义吸收（附录 H 增补）。
         """
 
         def _sweep(conn: sqlite3.Connection) -> list[TurnEnvelope]:
@@ -332,16 +342,21 @@ class SQLiteStateStore:
             try:
                 rows = conn.execute(
                     f"SELECT {_TURN_COLUMNS} FROM roost_turns "
-                    "WHERE status = ? AND locked_until <= ? "
+                    "WHERE status IN (?, ?) AND locked_until <= ? "
                     "ORDER BY locked_until LIMIT ?",
-                    (STATUS_RUNNING, self._now(), limit),
+                    (STATUS_RUNNING, STATUS_REQUEUED, self._now(), limit),
                 ).fetchall()
                 if rows:
                     turn_ids = [row["turn_id"] for row in rows]
                     placeholders = ", ".join("?" for _ in turn_ids)
                     conn.execute(
-                        f"UPDATE roost_turns SET status = ? WHERE turn_id IN ({placeholders})",
-                        (STATUS_REQUEUED, *turn_ids),
+                        f"UPDATE roost_turns SET status = ?, locked_until = ? "
+                        f"WHERE turn_id IN ({placeholders})",
+                        (
+                            STATUS_REQUEUED,
+                            self._now() + self._redelivery_grace_seconds,
+                            *turn_ids,
+                        ),
                     )
                 conn.execute("COMMIT")
             except BaseException:

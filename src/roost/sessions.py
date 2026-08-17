@@ -168,6 +168,18 @@ class SessionSandboxRegistry:
                      sandbox_id=handle.sandbox_id)
         return handle, client
 
+    async def destroy(self, handle: SandboxHandle) -> None:
+        """销毁一个沙箱，**保留绑定行**（附录 H 的停滞收场）。
+
+        绑定继续指向这个死沙箱是有意的：下一次 `get_or_create` 的 health 探测会
+        发现它不可用而走 cold boot + 快照恢复，和"沙箱在外部被 docker rm -f 掉"
+        完全同一条路径。在这里顺手清绑定反而会多出一种只有本调用制造得出的状态。
+
+        kill 失败不抛：调用方（runner）正在收拾一个已经判定为不可用的沙箱，
+        清理失败不该盖掉停滞这个真正的原因；失败经 ops 记 `sandbox_kill_failed`。
+        """
+        await self._kill_quietly(handle)
+
     # -- 复用路径 -------------------------------------------------------
 
     async def _revive(self, binding: SandboxHandle) -> ControlClient | None:

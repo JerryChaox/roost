@@ -509,3 +509,22 @@ hang 的定义：turn 已提交、driver 事件流在 `stall_timeout` 内颗粒�
     attempt+1 重投 + ops 记录；stop 干净取消。
 - 收尾项：`WORKSPACE_ENDPOINT` 自 control/client.py 收回 protocol.py
   （附录 G 疑点 1 的裁定归宿）。
+
+## 附录 H 增补：M5 落地裁定（2026-08-17）
+
+- **删除 `TurnStreamTimeoutError`/`turn_timeout`**：wall-clock 总时长上限与
+  "idle 不误杀"矛盾（会砍稳定出事件的长 turn），且其 failed 出口给卡死留了
+  第二条含糊路径。卡死判据唯一（含事件页间隔 > stall_timeout），出口唯一
+  （杀沙箱 + 不收尾 + sweep requeue）。
+- **pipeline 对 TurnStalledError 正常返回而非外抛**：外抛会触发投递层消费失败
+  重投，凭空多出第二条恢复路径。
+- **sweep 搁浅自愈**（附录 A sweep 语义修订）：标记 requeued 时同步
+  `locked_until = now + redelivery_grace`（SQLiteStateStore 构造参数，默认 30s；
+  requeued 态下 locked_until 的含义是重投期限）；sweep 谓词改为
+  `status IN ('running','requeued') AND locked_until <= now`。enqueue 失败或
+  宿主在 sweep 与重投之间崩溃的行到期自动再被扫出；重复重投由 begin_turn
+  接管语义吸收。port 签名零变化。
+- 停滞路径不备份工作区（不向已判定不响应的 driver 发请求）；
+  `watchdog_sweep_failed` / `watchdog_requeue_failed` ops 事件名采纳。
+- 遗留：`WORKSPACE_CONTENT_TYPE` 仍在 control/client.py，随下次触碰该文件的
+  里程碑一并收回 protocol.py。

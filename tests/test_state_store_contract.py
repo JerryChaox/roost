@@ -315,3 +315,24 @@ async def test_swap_binding_succeeds_on_exact_match(state_store) -> None:
     assert await state_store.swap_binding("session-1", current, new, new_stamp) is True
     assert await state_store.get_binding("session-1") == new
     assert await state_store.get_stamp("session-1") == new_stamp
+
+
+async def test_sweep_stranded_requeued_recovers_after_grace(
+    state_store, clock: FakeClock
+) -> None:
+    """sweep 与重投之间没有原子性：requeued 行若因 enqueue 失败/宿主崩溃而搁浅，
+    必须在重投期限（redelivery grace）到期后被再次扫出，不得静默失声。"""
+    turn = make_turn()
+    assert await state_store.begin_turn(turn, lock_seconds=LOCK) is True
+    clock.advance(LOCK + 1)
+    assert [t.turn_id for t in await state_store.sweep_due_turns(limit=10)] == [
+        turn.turn_id
+    ]
+    # 期限内不重复认领。
+    assert await state_store.sweep_due_turns(limit=10) == []
+    # 期限过后搁浅行自愈：再次被扫出，且仍可被 begin_turn 正常接管。
+    clock.advance(LOCK + 1)
+    assert [t.turn_id for t in await state_store.sweep_due_turns(limit=10)] == [
+        turn.turn_id
+    ]
+    assert await state_store.begin_turn(turn, lock_seconds=LOCK) is True

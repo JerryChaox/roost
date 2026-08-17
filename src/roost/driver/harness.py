@@ -49,6 +49,12 @@ class EchoHarness:
     - `payload["fail"]`：非空则在回显后抛 RuntimeError（验证 worker 的 Terminal 兜底）；
     - `payload["skip_terminal"]`：为真则不 emit Terminal（验证"Terminal 恒为最后一条"
       不变量由 driver 而不是 harness 保证）；
+    - `payload["hang_on_attempt"]`：等于 `turn.attempt` 时**不产出任何事件并永久
+      挂起**。这是 **M5（watchdog 与 liveness）的观测面**：宿主侧的停滞检测只能
+      靠"事件流颗粒无收"来判定，因此注入点必须是一个真的什么都不发的 harness。
+      同样刻意做成 payload 开关而不是新协议字段/端点——协议面零增（附录 H）；
+      按 attempt 触发是为了让"第一次挂死、requeue 后的第二次正常答复"能在同一个
+      turn_id 上表达出来；
     - `payload["counter"]`：为真则递增工作区里的 `counter` 文件并把新值附在回显后
       （`… counter=<n>`）。这是 **Demo 2（持久化）的观测面**：counter 跨沙箱重生
       续增，才说明工作区真的被备份并恢复了。刻意做成 payload 开关而不是新协议
@@ -72,6 +78,9 @@ class EchoHarness:
 
     async def run(self, turn: TurnEnvelope, emit: Callable[[DriverEvent], None]) -> None:
         payload = turn.payload
+        if _int_option(payload, "hang_on_attempt", 0) == turn.attempt:
+            # 一个事件都不发，然后永不返回：宿主侧的 stall_timeout 是唯一的出口。
+            await asyncio.Event().wait()
         text = _echo_text(payload)
         if payload.get("counter"):
             value = await asyncio.to_thread(self._bump_counter)

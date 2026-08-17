@@ -22,6 +22,9 @@ CAS，二者之间没有 session 级互斥。因此"同一 session 的两个**�
   sweep → requeue → 重投递这一条路径负责，避免两条恢复路径互相打架。
 - `process` 自身被 cancel（宿主崩溃/关停）时**不吞 CancelledError、也不 finish_turn**：
   让锁自然过期，交给 sweep 认领。这正是 wedged turn 能被恢复的前提。
+- `TurnStalledError`（沙箱卡死，runner 已销毁沙箱）与 cancel 同类：**不收尾、
+  不记 failed**，锁自然过期后交给 sweep → watchdog requeue。区别只在它正常返回
+  而不外抛——外抛会触发投递层的消费失败重投，凭空多出第二条恢复路径（附录 H）。
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 
 from .ports import StateStore, TurnDelivery
+from .runner import TurnStalledError
 from .types import TurnEnvelope
 
 __all__ = ["TurnProcessor"]
@@ -86,6 +90,12 @@ class TurnProcessor:
             except asyncio.CancelledError:
                 # 宿主崩溃/关停：不收尾，让锁过期后由 sweep 认领。
                 raise
+            except TurnStalledError:
+                # 沙箱卡死且已被 runner 销毁：**既不收尾也不记 failed**。
+                # 正常返回（而不是外抛）是关键——外抛会让投递层按消费失败重投，
+                # 那就是第二条恢复路径。心跳随本函数返回而停，锁在 lock_seconds
+                # 内自然过期，sweep → watchdog requeue 是唯一的接管者。
+                return
             except Exception:
                 await self._store.finish_turn(turn.turn_id, status=STATUS_FAILED)
             else:
