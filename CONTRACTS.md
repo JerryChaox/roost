@@ -424,3 +424,44 @@ Claude Agent SDK harness 拆为 M3c（M8 前完成）；快照恢复/备份不�
 - 其余采纳：get_or_create 增 kw-only `turn_id=""`（notice 挂靠）；DriverInstaller
   整包收集 roost 源码（全 stdlib，不会烂）；`RuntimeStamp.runtime_files_hash`
   维持 None 至 M6 fingerprint；swap CAS 失败 kill 新沙箱并 raise。
+
+## 附录 G：M4 持久化整合契约（2026-08-17 钉定）
+
+范围：workspace 备份/恢复 + Demo 2。存储层（附录 C）已落地，本段是接线。
+
+### 协议 v1 扩展（PROTOCOL.md 同步更新）
+
+- driver 启动时确保工作区目录存在：`ROOST_WORKSPACE_DIR`，默认 `/workspace`。
+- `GET /v1/workspace`：返回工作区目录的 tar.gz 字节（Content-Type
+  application/gzip）。空目录返回空归档。打包失败 → 500。
+- `PUT /v1/workspace`：body 为 tar.gz，解包覆盖进工作区目录（成员路径必须
+  相对且不得逃逸目录，违规 400）。解包失败 → 500。
+- 设计理由记录：持久化走控制面复用 `SandboxBackend.request` 通道，
+  SandboxBackend port 不为此扩 download 方法。
+
+### 交付模块与接线
+
+- `src/roost/driver/workspace.py`：tar.gz 打包/解包（纯逻辑 + 文件 IO，路径
+  逃逸防护）；server.py 挂两个端点。
+- `src/roost/control/client.py`：增 `get_workspace() -> bytes` 与
+  `put_workspace(data: bytes) -> None`。
+- `src/roost/backup.py`：BackupCoordinator——`schedule(session_id, client)`
+  fire-and-forget：GET workspace → `SnapshotStore.put(snapshot_key(session_id))`。
+  失败经 OpsRecorder 记录，**绝不影响 turn 结果**（I2）；同 session 并发去重
+  （已在跑则跳过本次）。测试可等待的句柄（`drain()`）。
+- `src/roost/runner.py`：Terminal（ok 或 error 均）后调度一次备份。
+- `src/roost/sessions.py`：cold boot 在 health 就绪后、返回前：
+  `SnapshotStore.get(snapshot_key)` 命中则 `put_workspace` 恢复；未命中直接返回
+  （首次会话）。恢复失败按 boot 失败处理（kill 半成品）。registry 构造参数增
+  `snapshot_store` + `snapshot_key`（均可选，缺任一则持久化整体禁用）。
+- EchoHarness 增 counter 行为（payload 键 `counter: true` 时递增
+  `$ROOST_WORKSPACE_DIR/counter` 并在回显附带值）——测试面，协议零增。
+- `examples/cli_chat.py`：REPL 增 `/kill` 元命令（rm -f 当前沙箱，演示重生）。
+
+### 验收测试
+
+- workspace 打包/解包单测（含路径逃逸拒绝）。
+- BackupCoordinator：成功写入 store；GET 失败不抛出、经 ops 记录；并发去重。
+- Demo 2 端到端（真 docker）：counter turn（=1）→ 备份完成 → `docker rm -f`
+  → 下一 turn 自动重建并恢复工作区 → counter=2。恢复失败路径：注入损坏
+  snapshot → boot 失败且不留活容器。
