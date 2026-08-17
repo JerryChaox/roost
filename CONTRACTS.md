@@ -715,3 +715,75 @@ def session_critical(self, session_id: str) -> AsyncContextManager[None]:
 - asyncpg 0.31（原生 asyncio、自带连接池）；pgbouncer 事务池需
   `statement_cache_size=0`，构造参数透传。宿主不得在 PG 临界区内 spawn task
   （共享连接并发），docstring 已注明。SQLite 的 session_critical 明确不跨进程。
+
+## 附录 M：M12 生产级 watchdog 语义契约（2026-08-17 钉定）
+
+来源：生产实现的完整语义提取（私有 spec，逐条带事故动机）。立场：**语义复刻、
+进程模型不复刻**——roost 的 runner 协程即 watcher，双时钟与决策矩阵实现在
+runner 的拉流循环，watchdog 组件继续只负责 sweep requeue。
+
+### 双时钟（替代现单一 stall_timeout，后者删除）
+
+- **liveness clock**：driver 侧任意活动。承载方式（pull 模型等价物）：events
+  长轮询响应增元字段 `liveness_quiet_ms`（driver 自上次任意内部活动——SDK
+  消息、harness 输出、心跳自检——至今的毫秒；driver 本地计算，无跨机时钟问题）。
+- **progress clock**：宿主侧计算，最近一次**可渲染**事件（Delta/ToolEvent）
+  至今；时间戳一律 clamp 到 turn 提交时刻（新 turn 不继承上一 turn 的 idle gap
+  ——事故动机：idle 间隙长于阈值时新 turn 首轮被误杀）。
+- 阈值（构造参数，默认取生产值）：boot grace 90s（首事件前豁免——事故动机：
+  cold boot 合法无事件期误杀引发 reload 风暴）；liveness 30s；progress 180s；
+  首个可渲染事件 30s。
+- 事故动机（双时钟本身）：单一 quiet clock 误杀慢 API 调用/长 tool/extended
+  thinking；heartbeat 新鲜而无 renderable = 真 hang 由 progress clock 判。
+
+### 决策矩阵（逐字复刻）
+
+| liveness | progress | activity probe | 结果 |
+|---|---|---|---|
+| 新鲜 | 未竭 | — | 继续 watch |
+| 新鲜 | 竭 | 即使 ACTIVE | kill/restart（真 hang） |
+| 竭 | 未竭 | ACTIVE | silence-defer，继续（计数仅观测，无次数上限） |
+| 竭 | 未竭 | 非 ACTIVE | kill/restart |
+| 竭 | 竭 | — | kill/restart，threshold_tripped=liveness |
+
+- activity probe：经 backend.exec 执行随 driver 分发的探测脚本（/proc 扫 driver
+  及子孙进程的 syscall/wchan/state，判 ACTIVE）；脚本计入 runtime fingerprint。
+
+### 升级阶梯（driver error ordinal，持久化）
+
+- `roost_turns` 增列 `error_ordinal INTEGER NOT NULL DEFAULT 0`；StateStore 增
+  方法 `bump_error_ordinal(turn_id) -> int`（返回自增后值）。事故动机：内存
+  marker 会被重投清掉，同沙箱曾重复 restart 约 95 轮。
+- ordinal 1：**restart**——经 exec 重启沙箱内 driver 进程（workspace 现场保留，
+  比冷启动便宜；driver 需支持被外部重启后干净起服务）；ordinal ≥2：杀沙箱走
+  既有 sweep→requeue 冷启动路径；ordinal ≥6：终止 turn——finish_turn('failed')
+  + ops 终止事件，不再重投。
+- stall kill（矩阵判定）与 driver error 共用 ordinal 计数。
+
+### 节奏与上限
+
+- 拉流节奏：dense（现行 wait_ms 长轮询）；累计轮次超 round budget（默认 240）
+  且仍有活性信号 → long-watch（拉流间隔放宽到 30s）——事故动机：健康的 21 分钟
+  长 turn 曾被 round budget 误终止；round budget 不是 turn 上限。
+- wall-clock ceiling 默认 90min：超过且非 terminal → **不杀沙箱**，
+  finish_turn('attention') 并记 ops——附录 A 终态词表修订：增加 'attention'
+  （需人工介入，非 failed）。
+
+### 观测纪律（逐条复刻）
+
+- 普通轮次零写入（dense/long-watch/重复 defer 均 write-free）；允许写入：
+  watch 开始、首次 silence-defer、long-watch 切换（一次）、终结决策、非空 sweep。
+- 事件字段：watch_round、threshold_tripped、liveness_quiet_ms、
+  progress_quiet_ms、turn_age_ms、silence_deferred_count、reload 层级。
+- kill/restart 前先采一次 diagnostic snapshot（probe 输出入 ops details）——
+  事故动机：沙箱终止后无法再取证。
+- cold boot >5s 未 ready：一次性异步采集 /proc 概况入 ops（boot stall dump
+  简化版；ready ceiling 沿用既有 boot_timeout）。
+
+### 验收
+
+- 决策矩阵五行各有测试（fake probe 注入 ACTIVE/非 ACTIVE）。
+- e2e（真 docker）：慢而活（liveness 竭、probe ACTIVE、progress 未竭）不被杀；
+  heartbeat 新鲜但无 renderable 超 progress 阈值被杀重投；restart 阶梯
+  1→2→6 各层可达（fake/注入驱动）；wall-clock 超限记 attention 不杀沙箱。
+- write-free 纪律测试：健康长 turn 全程 ops 零写入（fake recorder 断言）。
