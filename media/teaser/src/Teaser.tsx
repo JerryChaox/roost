@@ -595,7 +595,7 @@ const barProgress = (f: number) => {
 
 // scene 4: colour-code items by the store that holds their state (kept through scene 5)
 const TINT_DB = 524; // (a) inboxes, conversation cards, turn bar → database
-const TINT_SN = 535; // (b) files, agent sessions → snapshots
+const TINT_VOL = 535; // (b) files, agent sessions → volume
 const TINT_SB = 545; // (c) sandbox block → "processes · memory"
 const tintAt = (f: number, start: number, i = 0) => ramp(f, start + i * 2, start + i * 2 + 12);
 
@@ -653,7 +653,7 @@ const SandboxBlock: React.FC<{
       }}
     >
       <span style={{fontFamily: MONO, fontSize: 16, color: stroke}}>sandbox</span>
-      {/* bg knockout: the scene-5 restore lines pass behind this label */}
+      {/* bg knockout: the scene-5 mount lines pass behind this label */}
       <span
         style={{
           fontFamily: SANS,
@@ -675,9 +675,9 @@ const Workspace: React.FC<{f: number}> = ({f}) => {
   const red = ramp(f, DEATH, DEATH + 9);
   const drop = ramp(f, 680, 696, inE);
   const newIn = sp(f, 690, 22);
-  const restoreFiles = ramp(f, 706, 724, outE);
-  const restoreSess = ramp(f, 709, 727, outE);
-  const restoreFade = 1 - ramp(f, 738, 750);
+  const mountFiles = ramp(f, 706, 724, outE);
+  const mountSess = ramp(f, 709, 727, outE);
+  const mountFade = 1 - ramp(f, 738, 750);
   const filesHit = ramp(f, 722, 728) * (1 - ramp(f, 734, 748));
   const sessHit = ramp(f, 725, 731) * (1 - ramp(f, 737, 751));
 
@@ -687,9 +687,9 @@ const Workspace: React.FC<{f: number}> = ({f}) => {
   const barColor = mix(C.accent, C.db, tintAt(f, TINT_DB, 1));
   const sbNote = tintAt(f, TINT_SB);
 
-  const restorePaths: {d: string; p: number}[] = [
-    {d: ortho([[FILE_CX[0], 600], [FILE_CX[0], FILE_Y + FILE_H]]), p: restoreFiles},
-    {d: ortho([[FILE_CX[2], 600], [FILE_CX[2], FILE_Y + FILE_H]]), p: restoreFiles},
+  const mountPaths: {d: string; p: number}[] = [
+    {d: ortho([[FILE_CX[0], 600], [FILE_CX[0], FILE_Y + FILE_H]]), p: mountFiles},
+    {d: ortho([[FILE_CX[2], 600], [FILE_CX[2], FILE_Y + FILE_H]]), p: mountFiles},
     {
       d: ortho([
         [FILE_CX[0], 600],
@@ -697,14 +697,14 @@ const Workspace: React.FC<{f: number}> = ({f}) => {
         [FILE_CX[1], 250],
         [FILE_CX[1], FILE_Y + FILE_H],
       ]),
-      p: restoreFiles,
+      p: mountFiles,
     },
     ...CARD_X.map((cx) => ({
       d: ortho([
         [cx + SESSION.x + SESSION.w / 2, 600],
         [cx + SESSION.x + SESSION.w / 2, CARD_Y + CHIP_Y + CHIP_H],
       ]),
-      p: restoreSess,
+      p: mountSess,
     })),
   ];
 
@@ -717,7 +717,7 @@ const Workspace: React.FC<{f: number}> = ({f}) => {
       </Box>
       {FILES.map((name, i) => {
         const a = sp(f, 350 + i * 4, 18);
-        const sn = tintAt(f, TINT_SN, i);
+        const sn = tintAt(f, TINT_VOL, i);
         return (
           <Box
             key={name}
@@ -740,7 +740,7 @@ const Workspace: React.FC<{f: number}> = ({f}) => {
       {CARD_X.map((cx, i) => {
         const a = sp(f, 358 + i * 6, 20);
         const db = tintAt(f, TINT_DB, i);
-        const sn = tintAt(f, TINT_SN, i + 1);
+        const sn = tintAt(f, TINT_VOL, i + 1);
         const base = i === 1 ? mix(C.line, C.accent, acc) : C.line;
         return (
           <Box
@@ -841,14 +841,14 @@ const Workspace: React.FC<{f: number}> = ({f}) => {
           </Box>
         );
       })}
-      {/* restore from snapshots: green lines into the green items only */}
-      {restoreFiles > 0 && restoreFade > 0 && (
+      {/* the new sandbox mounts the same volume: green lines into the green items only */}
+      {mountFiles > 0 && mountFade > 0 && (
         <svg
           width={1280}
           height={720}
-          style={{position: 'absolute', left: 0, top: 0, opacity: restoreFade}}
+          style={{position: 'absolute', left: 0, top: 0, opacity: mountFade}}
         >
-          {restorePaths.map((rp, i) =>
+          {mountPaths.map((rp, i) =>
             rp.p > 0 ? (
               <path
                 key={i}
@@ -902,7 +902,7 @@ const Legend: React.FC<{f: number}> = ({f}) => {
   const fadeOut = 1 - ramp(f, 645, 657);
   const items = [
     {name: 'database', line: 'conversations · inboxes · turns', color: C.db, dashed: false},
-    {name: 'snapshots', line: 'files · agent sessions', color: C.ok, dashed: false},
+    {name: 'volume', line: 'files · agent sessions', color: C.ok, dashed: false},
     {name: 'sandbox', line: 'processes · memory', color: C.muted, dashed: true},
   ];
   const checks = [ramp(f, 604, 618, outE), ramp(f, 610, 624, outE), 0];
