@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="assets/roost-teaser.gif" width="760" alt="A sandbox is killed and the conversation continues on a new one; a message delivered twice is answered once; a hung turn resumes at the step it stopped on; a thousand idle conversations run on three sandboxes.">
+  <img src="assets/roost-teaser.gif" width="760" alt="Tenants are walled off and every user gets a workspace; conversations share its files while their state lives outside the sandbox, so when the sandbox dies a new one picks up where it left off.">
 </p>
 
 <h1 align="center">roost</h1>
 
 <p align="center">
   <b>A durable runtime for Claude Code and Codex.</b><br>
-  A workspace that never dies. An agent that never answers twice.
+  A workspace that never dies.
 </p>
 
 ## Why
