@@ -19,7 +19,7 @@ You put Claude Code or Codex behind a chat: every user gets an agent, every agen
 - **You ship upgrades.** Every live conversation has to start over.
 - **Users open more threads.** Either each thread gets its own sandbox and can't see the others' files, or two threads edit the same files at once.
 
-Every one of these happened in production, running Claude Code agents for Feishu and Slack users. roost takes them off your hands. You talk to an agent by its address: send messages to a conversation, read events back. roost decides which sandbox it runs on, when it sleeps, how it comes back, and makes sure only one copy of it is ever running.
+roost takes them off your hands. You talk to an agent by its address: send messages to a conversation, read events back. roost decides which sandbox it runs on, when it sleeps, how it comes back, and makes sure only one copy of it is ever running.
 
 ## How it works
 
