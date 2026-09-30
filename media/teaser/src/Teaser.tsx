@@ -312,7 +312,7 @@ const Scene1: React.FC<{f: number}> = ({f}) => {
           transform: `translateY(${lerp(10, 0, sp(f, 146, 26))}px)`,
         }}
       >
-        A runtime for Claude Code and Codex that keeps agent state out of the sandbox.
+        A durable runtime for any agent SDK.
       </div>
     </AbsoluteFill>
   );
@@ -984,33 +984,52 @@ const Legend: React.FC<{f: number}> = ({f}) => {
 // ---------------------------------------------------------------- scene 6 · end card (780–870)
 const Scene6: React.FC<{f: number}> = ({f}) => {
   if (f < 780) return null;
-  const a = ramp(f, 784, 800);
-  const b = ramp(f, 792, 806);
+  // all three lines are fully in by frame 806 (hold 806–870)
+  const a = ramp(f, 784, 798);
+  const b = ramp(f, 788, 802);
+  const c = ramp(f, 792, 806);
   return (
     <AbsoluteFill
-      style={{alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 30}}
+      style={{alignItems: 'center', justifyContent: 'center', flexDirection: 'column'}}
     >
       <div
         style={{
           fontFamily: SANS,
-          fontSize: 56,
+          fontSize: 48,
           fontWeight: 500,
           color: C.text,
           letterSpacing: -0.5,
           lineHeight: 1.1,
+          whiteSpace: 'nowrap',
           opacity: a,
           transform: `translateY(${lerp(10, 0, sp(f, 784, 26))}px)`,
         }}
       >
-        A workspace that never dies.
+        Build all your enterprise agents on one stack.
       </div>
       <div
         style={{
+          marginTop: 18,
+          fontFamily: SANS,
+          fontSize: 24,
+          color: C.muted,
+          lineHeight: 1.2,
+          whiteSpace: 'nowrap',
+          opacity: b,
+          transform: `translateY(${lerp(8, 0, sp(f, 788, 26))}px)`,
+        }}
+      >
+        Agent state lives in your own S3, private and out of the sandbox.
+      </div>
+      <div
+        style={{
+          marginTop: 34,
           fontFamily: MONO,
           fontSize: 24,
           color: C.muted,
           lineHeight: 1.2,
-          opacity: b,
+          whiteSpace: 'nowrap',
+          opacity: c,
           transform: `translateY(${lerp(8, 0, sp(f, 792, 26))}px)`,
         }}
       >
