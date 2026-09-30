@@ -10,7 +10,7 @@ The driver protocol is how the control plane (`roost`) talks to `roost-driver`, 
 ## 1. Roles
 
 - **Control plane** owns conversations, turns, grants and bindings. It decides what runs where.
-- **Driver** owns what happens inside one sandbox: it starts one agent process per turn attempt, streams its output, checkpoints each step into the shadow repository, and takes the turn snapshot.
+- **Driver** owns what happens inside one sandbox: it starts one agent process per turn attempt, streams its output, checkpoints each step into the shadow repository, and snapshots the workspace.
 - **Attempt**: one agent process working on one turn. When a process dies and the turn resumes, that is the next attempt of the same turn.
 
 ## 2. Transport
@@ -123,7 +123,7 @@ The request carries the grant in a header: `Roost-Grant: <generation>.<token>`. 
 
 ### `POST /v1/snapshots`
 
-Takes a snapshot of the workspace immediately. Refused with `409 conversation_busy` while any attempt is active, because snapshots happen only at turn boundaries.
+Takes a snapshot of the whole workspace now. If attempts are running, the driver freezes their process groups for the duration of the snapshot and resumes them afterwards. The driver also snapshots on its own when the workspace goes idle after a turn, and when it has been busy for longer than the `max_interval` it was configured with.
 
 ### `POST /v1/drain`
 
@@ -165,7 +165,7 @@ Every event has the same envelope:
 | `turn.failed` | `reason` |
 | `snapshot.completed` | `snapshot` |
 
-Ordering: `seq` increases by one per event within a turn, across attempts. `turn.completed` or `turn.failed` is the last event of an attempt, except `snapshot.completed`, which follows a completed turn.
+Ordering: `seq` increases by one per event within a turn, across attempts. `turn.completed` or `turn.failed` is the last event of an attempt. `snapshot.completed` is reported on the stream of every turn it covers.
 
 ## 6. Errors
 
@@ -184,7 +184,8 @@ Errors are JSON: `{ "error": "<code>", "detail": "..." }`.
 ## 7. Inside the sandbox (not part of the wire protocol)
 
 - The driver installs the agent's tool hooks. The pre-tool hook asks the driver, over a Unix socket only the driver can serve, whether the conversation's lease is valid; the post-tool hook tells the driver to commit a step.
-- The shadow repository lives at `/var/lib/roost/shadow.git`, owned by the driver's user.
+- The shadow repository lives at `/var/lib/roost/shadow.git`, owned by the driver's user. The driver is its only writer and serializes commits from all conversations.
+- A freeze is SIGSTOP on each running attempt's process group, then SIGCONT after the snapshot. Hooks and network calls simply resume.
 - Snapshots are taken with kopia using the per-turn credentials from the submission.
 
 ## 8. What changed from the production system it comes from

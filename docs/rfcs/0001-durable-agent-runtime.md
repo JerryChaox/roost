@@ -29,7 +29,7 @@ Sandbox providers solve "give me a machine". Agent frameworks solve "write an ag
 ## Goals
 
 1. Address an agent, not a sandbox: send messages to a conversation, read events back.
-2. Survive sandbox loss with at most the last turn replayed.
+2. Survive sandbox loss, redoing at most the work since the last snapshot.
 3. Answer every message once, even when it is delivered more than once.
 4. Isolate tenants completely; keep agent data in the operator's own storage.
 5. Run any agent SDK that can be driven from a command line, starting with Claude Code and Codex.
@@ -67,9 +67,9 @@ Only Workspace, Conversation and Turn appear in the public vocabulary.
 | Layer | What roost does | What it guarantees |
 |---|---|---|
 | Access | Channel adapters (Feishu, Slack, Telegram) and the conversation API | Each message gets in once. Replies return to the thread they came from. |
-| Workspace | Binds a workspace to a sandbox; wakes it on demand, lets it sleep, replaces it to recover or upgrade | The workspace survives any sandbox; at worst the last turn is replayed. Idle agents cost nothing. Upgrades don't restart conversations. |
+| Workspace | Binds a workspace to a sandbox; wakes it on demand, lets it sleep, replaces it to recover or upgrade | The workspace survives any sandbox; at worst the work since the last snapshot is redone. Idle agents cost nothing. Upgrades don't restart conversations. |
 | Conversation | Deduplicates, queues and batches messages into turns; issues and revokes grants | Answered once, even when delivered twice. One turn at a time. One live executor. |
-| Turn | Runs one agent process per turn and watches it | Streams live. A hung turn recovers on its own. Process dies: resume at the step. Machine dies: replay the turn. |
+| Turn | Runs one agent process per turn and watches it | Streams live. A hung turn recovers on its own. Process dies: resume at the step. Machine dies: resume from the last snapshot. |
 | Infrastructure | Sandboxes (Docker, E2B Cloud, E2B Embed), state (SQLite, Postgres), snapshots (S3, GCS, local directory) | Swap a provider and nothing above changes. |
 
 Operations run across every layer through the `roost` CLI.
@@ -82,15 +82,17 @@ Every fact has one owner and one place.
 |---|---|---|
 | Conversations, inboxes, turns, grants, workspace bindings, events, audit | roost database (SQLite or Postgres) | Transactional |
 | Workspace files and agent sessions | A shadow git repository inside the sandbox | Every step |
-| The whole workspace, including the shadow repository | kopia snapshot to object storage, one repository per workspace | Every turn |
-| Files larger than a threshold (default 10 MiB) | Excluded from the shadow repository; kopia only | Every turn |
+| The whole workspace, including the shadow repository | kopia snapshot to object storage, one repository per workspace | When the workspace goes idle after a turn, and at least every `max_interval` |
+| Files larger than a threshold (default 10 MiB) | Excluded from the shadow repository; kopia only | With every snapshot |
 | Processes and memory | The sandbox; pause and resume only make it faster | Disposable |
 
 Rules:
 
 - **Sandbox state is not copied.** Whether a sandbox is running, paused or gone is the provider's fact; roost asks the provider, listing by labels in one call when it needs many.
 - **Provider volumes are not used.** See [Alternatives](#alternatives-considered).
-- **Snapshots are taken at turn boundaries**, when no agent process is writing, so a snapshot never contains a half-finished step.
+- **A snapshot covers the whole workspace at one instant.** Conversations share the workspace's files, so their sessions and those files must come from the same moment; snapshotting one conversation's part would restore sessions and files that disagree.
+- **Snapshots are taken when nothing is running.** The driver takes one as soon as the workspace goes idle after a turn. If the workspace has been busy for longer than `snapshot.max_interval` (default 10 minutes), the driver freezes every running agent process (SIGSTOP on its process group), takes the snapshot, and resumes them (SIGCONT). Snapshots are incremental, so the freeze usually lasts seconds.
+- **The driver is the only writer of the shadow repository.** Step commits from all conversations are serialized; each is a checkpoint of the whole workspace, labelled with the conversation and step that caused it.
 - **Rebuildable directories are excluded** from both layers (for example `node_modules`, build caches).
 - **Credentials that roost injects are never persisted.** They live on tmpfs or are injected by an egress proxy.
 - **One kopia repository per workspace.** Its key is present inside the sandbox; sharing a repository across workspaces would break the workspace trust boundary.
@@ -100,7 +102,7 @@ Recovery:
 | Failure | Recovery |
 |---|---|
 | Agent process dies or hangs | Kill it; start a new process that resumes the SDK session at the last completed step |
-| Sandbox or machine is lost | Start a new sandbox, restore the last turn snapshot, replay the interrupted turn |
+| Sandbox or machine is lost | Start a new sandbox and restore the last snapshot; every conversation resumes from its session in that snapshot, and a step that was running at the time may repeat |
 | Upgrade | At a turn boundary, start a sandbox from the new template and restore the latest snapshot |
 
 ## Sandboxes
@@ -179,7 +181,7 @@ Later: rewinding a workspace to an earlier step or turn, roost's own egress prox
 
 1. Is the public vocabulary limited to Workspace, Conversation and Turn?
 2. Is the workspace the trust boundary, or does each conversation need its own OS user?
-3. How is recovery stated publicly: "resume at the step, replay the turn"?
+3. How is recovery stated publicly: "resume at the step, or from the last snapshot"?
 4. When is the public announcement: after M3, or earlier?
 
 To verify before M0 is closed:

@@ -40,9 +40,9 @@ Each level makes its own promise:
 | Level | What roost does | What you can rely on |
 |---|---|---|
 | Access | Channel webhooks and the conversation API | Each message gets in once. Replies go back to the thread they came from. |
-| Workspace | Checkpoints files and agent sessions after every step, and snapshots them to object storage at the end of every turn; wakes a sandbox on demand, lets it sleep when idle, and swaps it to recover or upgrade | The workspace survives any sandbox: at worst, the last turn is replayed. Idle agents cost nothing. Upgrades don't restart conversations. |
+| Workspace | Checkpoints files and agent sessions after every step, and snapshots the whole workspace to object storage after turns; wakes a sandbox on demand, lets it sleep when idle, and swaps it to recover or upgrade | The workspace survives any sandbox: at worst, the work since the last snapshot is redone. Idle agents cost nothing. Upgrades don't restart conversations. |
 | Conversation | Deduplicates, queues and batches messages into turns; grants the right to execute | Answered once, even when delivered twice. One turn at a time, one live executor. |
-| Turn | Runs one `claude` or `codex` process per turn and watches it | Streams live. A hung turn recovers on its own. If the process dies, it resumes at the step; if the machine dies, the turn is replayed. |
+| Turn | Runs one `claude` or `codex` process per turn and watches it | Streams live. A hung turn recovers on its own. If the process dies, it resumes at the step; if the machine dies, it resumes from the last snapshot. |
 | Infrastructure | Docker, or E2B Firecracker microVMs (E2B Cloud, or E2B Embed on your own machine) for sandboxes; SQLite or Postgres for state; S3, GCS or a local directory for snapshots | Swap a provider and nothing above changes. |
 
 Isolation is by tenant: data, credentials and snapshots never cross a tenant. Inside one workspace, conversations are separated logically but trust each other, the same way two terminal windows on one machine do.

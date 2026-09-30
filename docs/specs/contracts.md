@@ -29,7 +29,7 @@ These hold for every backend and every configuration. None of them can be turned
 3. At most one executor MAY hold a conversation's grant. Writes to roost carrying a superseded grant MUST be rejected.
 4. Nothing MUST cross a tenant: bindings, snapshots, credentials, caches and object-storage prefixes are all tenant-scoped.
 5. Credentials injected by roost MUST NOT be written to the workspace, the shadow repository or any snapshot.
-6. A snapshot MUST be taken only at a turn boundary and MUST be atomic: a restore sees a complete snapshot or the previous one.
+6. A snapshot MUST cover the whole workspace at one instant, MUST be taken only while no agent process in the workspace is running (idle, or frozen for the snapshot), and MUST be atomic: a restore sees a complete snapshot or the previous one.
 7. roost MUST NOT store a copy of a sandbox's lifecycle state; it asks the backend.
 8. A Kit that requires a capability the backend cannot enforce MUST be rejected before any sandbox is created.
 9. A Kit update that widens permissions MUST wait for operator approval.
@@ -153,14 +153,14 @@ Logical records (the DDL is an implementation detail): tenants, workspaces (bind
 
 ### Inside the sandbox
 
-- Shadow repository: `/var/lib/roost/shadow.git`, work tree = the workspace's `volume@1` paths. One commit per completed step; the commit message records the turn id and the SDK's step id (e.g. Claude's `tool_use_id`). Automatic `git gc` is disabled; roost runs maintenance between turns.
+- Shadow repository: `/var/lib/roost/shadow.git`, work tree = the workspace's `volume@1` paths. The driver is its only writer: commits from all conversations are serialized, one per completed step, and each commit message records the conversation, the turn id and the SDK's step id (e.g. Claude's `tool_use_id`). Automatic `git gc` is disabled; roost runs maintenance between turns.
 - Files larger than `snapshot.max_file_size` (default 10 MiB) are ignored by the shadow repository.
 - Excluded from both layers: paths listed in `snapshot.exclude` (defaults include `node_modules`, `.cache`, build output).
 
 ### Object storage
 
 - One kopia repository per workspace at `<bucket>/tenants/<tenant>/workspaces/<workspace>/`.
-- One snapshot per completed turn, tagged `turn:<turn id>`.
+- A snapshot is taken when the workspace goes idle after a turn, and at least every `snapshot.max_interval`, freezing running agent processes if needed. It is tagged with the turns completed since the previous snapshot.
 - Retention: `snapshot.keep_last` (default 50) plus `snapshot.keep_daily` (default 7). Maintenance is scheduled by the control plane, never from inside a sandbox.
 - Upload credentials are short-lived, issued per turn and restricted to the workspace prefix (STS session policy on S3, downscoped tokens on GCS). Local development uses a filesystem repository; tests use RustFS.
 
@@ -176,6 +176,7 @@ workspace:
   upgrade: next-turn             # next-turn | now
 snapshot:
   store: s3://bucket             # s3:// | gs:// | file://
+  max_interval: 10m
   max_file_size: 10MiB
   exclude: [node_modules, .cache]
   keep_last: 50
@@ -212,10 +213,11 @@ Every backend and every change to the core must pass these, against a local stac
 2. Two messages sent while a turn runs become one batched turn (`queue` policy).
 3. After an executor is replaced, events and writes from the old grant are rejected.
 4. Killing the agent process mid-turn resumes the turn at the last completed step.
-5. Killing the sandbox mid-turn restores the last turn snapshot on a new sandbox and replays the turn.
+5. Killing the sandbox mid-turn restores the last snapshot on a new sandbox, and every conversation resumes from its session in that snapshot.
 6. An upgrade applied at a turn boundary keeps the workspace's files and every conversation's session.
-7. Two conversations in one workspace share files but not sessions or reply routes.
-8. Two tenants never share a binding, snapshot prefix, credential or cache entry.
-9. A Kit requiring an unsupported capability is rejected before any sandbox exists.
-10. A failed channel delivery does not mark a turn as answered, and a retry never replies into another conversation.
-11. Credentials injected by roost are absent from every snapshot.
+7. With two conversations busy without a break, a snapshot is still taken within `snapshot.max_interval`, and restoring it leaves each conversation's session consistent with the files.
+8. Two conversations in one workspace share files but not sessions or reply routes.
+9. Two tenants never share a binding, snapshot prefix, credential or cache entry.
+10. A Kit requiring an unsupported capability is rejected before any sandbox exists.
+11. A failed channel delivery does not mark a turn as answered, and a retry never replies into another conversation.
+12. Credentials injected by roost are absent from every snapshot.
