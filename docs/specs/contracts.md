@@ -43,7 +43,7 @@ HTTP/JSON under `/v1`, authenticated with a tenant API key. Called from the appl
 `POST /v1/conversations`
 
 ```json
-{ "owner": "user-42", "workspace": "optional-name", "metadata": { "any": "json" } }
+{ "owner": "user-42", "workspace": "optional-name" }
 ```
 
 Response `201`: `{ "id": "api:01J9Z...", "workspace": "acme/user-42" }`. If `workspace` is omitted it defaults to `owner`.
@@ -57,7 +57,7 @@ Response `201`: `{ "id": "api:01J9Z...", "workspace": "acme/user-42" }`. If `wor
 `POST /v1/conversations/{id}/messages`
 
 ```json
-{ "id": "m-1", "text": "hi", "attachments": [] }
+{ "id": "m-1", "text": "hi" }
 ```
 
 Responses:
@@ -79,8 +79,8 @@ Responses:
 | `turn.started` | `turn_id`, `message_ids` |
 | `delta` | `turn_id`, `text` |
 | `tool` | `turn_id`, `name`, `status` |
-| `notice` | `turn_id`, `kind` (e.g. `waking`, `recovering`, `upgrading`) |
-| `turn.completed` | `turn_id`, `usage` |
+| `notice` | `turn_id`, `kind` (`waking`, `recovering`, `upgrading`) |
+| `turn.completed` | `turn_id` |
 | `turn.failed` | `turn_id`, `reason` |
 
 Delivery is at-least-once; clients deduplicate by event `id`.
@@ -109,8 +109,8 @@ Every backend implements:
 | Group | Operations |
 |---|---|
 | Lifecycle | `Create(template, labels)`, `Connect(id)` (resumes if paused), `Pause(id)`, `Kill(id)`, `SetTimeout(id, d)` |
-| Execution | `Exec(id, argv, env, stdin) → stream(stdout, stderr), exit` |
-| Files | `Read`, `Write`, `Upload`, `Download` |
+| Execution | `Exec(id, argv, env) → stream(stdout, stderr), exit` |
+| Files | `Read(id, path)`, `Write(id, path, bytes)` |
 | Reachability | `Endpoint(id, port) → url, headers` |
 | Templates | `BuildTemplate(image, resources, start, ready) → template id` |
 | Inventory | `List(labels) → []{id, state, labels}` in one call |
@@ -202,13 +202,7 @@ Unknown keys are errors. Secrets appear only as references, never as values.
 
 ## 11. Driver protocol
 
-**TBD (M0).** Requirements the protocol must meet:
-
-- Reached through the backend's `Endpoint`; authenticated per sandbox; versioned by header.
-- Submitting a turn is idempotent by turn id.
-- Events are pulled with a cursor; re-reading is safe.
-- Supports interrupt, health and snapshot-now.
-- Every event and write carries the grant.
+Specified in [driver-protocol.md](driver-protocol.md): how the control plane starts turns in a sandbox, pulls their events, carries grants, restores and snapshots workspaces, and drains a sandbox before it is replaced.
 
 ## 12. Conformance scenarios
 

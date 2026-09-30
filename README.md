@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/roost-teaser.gif" width="760" alt="Tenants are walled off and every user gets a workspace; conversations share its files while their state lives outside the sandbox, so when the sandbox dies a new one picks up where it left off.">
+  <img src="assets/roost-teaser.webp" width="760" alt="Tenants are walled off and every user gets a workspace; conversations share its files while their state lives outside the sandbox, so when the sandbox dies a new one picks up where it left off.">
 </p>
 
 <h1 align="center">roost</h1>
