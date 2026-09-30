@@ -25,7 +25,7 @@ roost takes them off your hands. You talk to an agent by its address: send messa
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/architecture-dark.svg">
-  <img src="assets/architecture-light.svg" width="100%" alt="roost layers: access, conversation, turn, workspace and infrastructure, each with the guarantee it provides; operations run across all of them.">
+  <img src="assets/architecture-light.svg" width="100%" alt="A tenant contains workspaces; a workspace holds shared files, several conversations and the sandbox it currently runs on; each conversation has an inbox, a grant and one running turn. Each level lists its guarantees and operator commands.">
 </picture>
 
 You only need three words:
@@ -34,14 +34,14 @@ You only need three words:
 - **Conversation**: a thread inside a workspace, with its own inbox and context. Several conversations can share one workspace and see the same files.
 - **Turn**: one run of the agent over the messages waiting in the inbox.
 
-Each layer makes one kind of promise:
+Each level makes its own promise:
 
-| Layer | What roost does | What you can rely on |
+| Level | What roost does | What you can rely on |
 |---|---|---|
 | Access | Channel webhooks and the conversation API | Each message gets in once. Replies go back to the thread they came from. |
+| Workspace | Wakes a sandbox on demand, sleeps it when idle, snapshots, moves and upgrades it | The workspace survives any sandbox. Idle agents cost nothing. Upgrades don't restart conversations. |
 | Conversation | Deduplicates, queues and batches messages into turns; grants the right to execute | Answered once, even when delivered twice. One turn at a time, one live executor. |
 | Turn | Runs one `claude` or `codex` process per turn and watches it | Streams live. A hung turn recovers on its own. If the process dies, it resumes at the step; if the machine dies, the turn is replayed. |
-| Workspace | Wakes a sandbox on demand, sleeps it when idle, snapshots, moves and upgrades it | The workspace survives any sandbox. Idle agents cost nothing. Upgrades don't restart conversations. |
 | Infrastructure | Docker or E2B for sandboxes, SQLite or Postgres for state, a filesystem or S3 for snapshots | Swap a provider and nothing above changes. |
 
 Isolation is by tenant: data, credentials and snapshots never cross a tenant. Inside one workspace, conversations are separated logically but trust each other, the same way two terminal windows on one machine do.
@@ -71,12 +71,12 @@ By default each `owner` gets one workspace, so the same user's conversations sha
 
 The `roost` CLI covers every layer and is built for agents as much as for people: `--json` everywhere, stable schemas, meaningful exit codes, and a `SKILL.md` so Claude Code can run it.
 
-| Layer | Look | Act |
+| Level | Look | Act |
 |---|---|---|
 | Access | `roost channel status` | |
+| Workspace | `roost ws inspect` | `roost ws recover` |
 | Conversation | `roost conv inspect`, `roost conv timeline`, `roost conv transcript` | `roost conv reset` |
 | Turn | `roost turn logs` | `roost turn retry` |
-| Workspace | `roost ws inspect` | `roost ws recover` |
 | Everything | `roost status`, `roost doctor` | |
 
 Commands that change state need an operator token and a `--reason`, support `--dry-run`, and are audited. The CLI only talks to the control plane API, and it is not available inside sandboxes.
