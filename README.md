@@ -9,9 +9,6 @@
   A workspace that never dies. An agent that never answers twice.
 </p>
 
-> [!NOTE]
-> roost is being rewritten in Go. This README describes the design being built; the code currently on `main` is the earlier Python prototype and is being replaced. Nothing below is released yet.
-
 ## Why
 
 You put Claude Code or Codex behind a chat: every user gets an agent, every agent gets a sandbox. Then production happens.
@@ -22,7 +19,7 @@ You put Claude Code or Codex behind a chat: every user gets an agent, every agen
 - **You ship upgrades.** Every live conversation has to start over.
 - **Users open more threads.** Either each thread gets its own sandbox and can't see the others' files, or two threads edit the same files at once.
 
-roost takes that off your hands. You talk to an agent by its address: send messages to a conversation, read events back. roost decides which sandbox it runs on, when it sleeps, how it comes back, and makes sure only one copy of it is ever running.
+Every one of these happened in production, running Claude Code agents for Feishu and Slack users. roost takes them off your hands. You talk to an agent by its address: send messages to a conversation, read events back. roost decides which sandbox it runs on, when it sleeps, how it comes back, and makes sure only one copy of it is ever running.
 
 ## How it works
 
@@ -53,7 +50,7 @@ Isolation is by tenant: data, credentials and snapshots never cross a tenant. In
 
 **Chat channels.** Point a Feishu, Slack or Telegram webhook at roost. The adapter works out which conversation each message belongs to, and replies stream back into the same thread. You never handle a conversation ID.
 
-**Everything else**, such as a website. Your backend creates conversations for its own users and talks to them over HTTP (planned API):
+**Everything else**, such as a website. Your backend creates conversations for its own users and talks to them over HTTP:
 
 ```bash
 # start a conversation for one of your users
@@ -105,10 +102,6 @@ The control plane reaches the driver through the sandbox provider, so `roost` ca
 | M1 · Local | `roost up` on Docker with Claude Code, the Telegram adapter, the CLI |
 | M2 · Resilience | Watchdog, snapshots, upgrades without restarts |
 | M3 · Launch | E2B, Codex, Slack and Feishu adapters |
-
-## Background
-
-roost comes out of running Claude Code agents for real users in Feishu and Slack, where every failure listed under [Why](#why) happened in production. The Go rewrite keeps what worked there and leaves the rest behind.
 
 ## License
 
