@@ -5,8 +5,9 @@
 <h1 align="center">roost</h1>
 
 <p align="center">
-  <b>A runtime for Claude Code and Codex that keeps agent state out of the sandbox.</b><br>
-  Build all your enterprise agents on one stack. A workspace that never dies.
+  <b>A durable runtime for any agent SDK.</b><br>
+  Agent state lives in your own S3, private and out of the sandbox.<br>
+  Build all your enterprise agents on one stack.
 </p>
 
 ## Why
