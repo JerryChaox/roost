@@ -312,7 +312,7 @@ const Scene1: React.FC<{f: number}> = ({f}) => {
           transform: `translateY(${lerp(10, 0, sp(f, 146, 26))}px)`,
         }}
       >
-        A durable runtime for Claude Code and Codex.
+        A runtime for Claude Code and Codex that keeps agent state out of the sandbox.
       </div>
     </AbsoluteFill>
   );
