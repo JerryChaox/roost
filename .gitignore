@@ -9,3 +9,7 @@
 
 # local secrets
 .env
+
+# teaser video source (media/teaser): dependencies and render output
+media/**/node_modules/
+media/**/out/
