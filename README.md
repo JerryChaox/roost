@@ -5,8 +5,8 @@
 <h1 align="center">roost</h1>
 
 <p align="center">
-  <b>A durable runtime for Claude Code and Codex.</b><br>
-  A workspace that never dies.
+  <b>A runtime for Claude Code and Codex that keeps agent state out of the sandbox.</b><br>
+  Build all your enterprise agents on one stack. A workspace that never dies.
 </p>
 
 ## Why
