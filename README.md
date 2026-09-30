@@ -95,6 +95,17 @@ The control plane reaches the driver through the sandbox provider, so `roost` ca
 - **Not a sandbox provider.** Bring Docker, E2B Cloud, or [E2B Embed](https://github.com/e2b-dev/runtime/tree/main/embed) on your own Linux machine, which needs no E2B account.
 - **Not exactly-once.** Answers are deduplicated and old executors are fenced off, but the step that was running at the moment of a crash may run again. Make external side effects idempotent.
 
+## Run it
+
+```bash
+roost up                      # a laptop: Docker sandboxes
+docker compose up -d --wait   # one Linux machine with KVM: roost and E2B Embed
+terraform apply               # a VM on GCP or AWS, state on a persistent disk
+kubectl apply -k              # one node in your Kubernetes cluster
+```
+
+Object storage is optional: add an S3 or GCS bucket when workspaces need to move between machines.
+
 ## Design
 
 - [RFC 0001: a durable runtime for agent SDKs](docs/rfcs/0001-durable-agent-runtime.md): the model, where state lives, and why.

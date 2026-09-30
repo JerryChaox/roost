@@ -155,6 +155,27 @@ roost's own configuration (`roost.yaml`) covers only what Kits cannot: how works
 
 The `roost` CLI uses `roost <object> <verb>` and covers every layer: `status`, `doctor`, `channel status`, `ws inspect|recover`, `conv inspect|timeline|transcript|reset`, `turn logs|retry`. It is a thin client of the control-plane API, prints `--json`, ships a `SKILL.md` for agents, requires an operator token and `--reason` for anything that changes state, supports `--dry-run`, audits every change, and is not available inside sandboxes.
 
+## Deployment
+
+Every way to run roost is one command.
+
+| Where | You need | Command | What runs |
+|---|---|---|---|
+| A laptop | Docker | `roost up` | roost with SQLite and Docker sandboxes; no KVM needed |
+| One Linux machine | KVM and Docker | `docker compose up -d --wait` | roost plus a pinned E2B Embed, with all state on the machine's data disk |
+| GCP or AWS | A cloud project or account | `terraform apply` | A VM with nested virtualization and a separate persistent data disk with scheduled disk snapshots, running the same compose stack |
+| Kubernetes | One node with KVM | `kubectl apply -k` | A StatefulSet with a persistent volume |
+
+Adding object storage (`snapshot.store`) is optional. It is needed only to move workspaces between machines or providers, to run more than one node, or to survive losing the whole data disk.
+
+Single-node rules:
+
+- **roost uses SQLite on the data disk.** No database is added beyond what E2B Embed brings. roost does not use Embed's internal Postgres, so the two can be upgraded independently.
+- **Embed is pinned.** roost's compose file includes Embed's compose file at a fixed version.
+- **State lives on a persistent disk, not the VM.** On GCP and AWS the data disk is a Persistent Disk or EBS volume that survives the VM and is snapshotted on a schedule. E2B's own Terraform modules recreate the machine with a fresh disk; roost's add the data disk.
+- **Durability on one node.** If the VM dies, the disk survives with roost's state and every paused sandbox. Sandboxes that were running when the host went down restart from their last pause, and their conversations resume from the sessions saved in that pause. Idle sandboxes are paused, so only the ones busy at that moment are affected.
+- **One node is one failure domain.** While the machine is down its workspaces are unavailable; object storage is what lets them move elsewhere.
+
 ## Security
 
 - **Isolation:** tenant is the hard boundary; workspace is the trust boundary.
@@ -183,7 +204,7 @@ The `roost` CLI uses `roost <object> <verb>` and covers every layer: `status`, `
 | M0 · Contracts | Layer interfaces, the driver protocol, the Kit mapping, conformance scenarios |
 | M1 · Local | `roost up` on Docker with Claude Code, the Telegram adapter, the CLI |
 | M2 · Resilience | Watchdog, step checkpoints and turn snapshots, upgrades without restarts |
-| M3 · Launch | E2B Cloud and E2B Embed, Codex, Slack and Feishu adapters |
+| M3 · Launch | E2B Cloud and E2B Embed, Codex, Slack and Feishu adapters; one-command deployments (compose with E2B Embed, Terraform for GCP and AWS, Kubernetes) |
 
 Later: rewinding a workspace to an earlier step or turn, roost's own egress proxy, more agent SDKs, multi-node control planes.
 
