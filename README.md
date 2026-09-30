@@ -95,14 +95,10 @@ The control plane reaches the driver through the sandbox provider, so `roost` ca
 - **Not a sandbox provider.** Bring Docker, E2B Cloud, or [E2B Embed](https://github.com/e2b-dev/runtime/tree/main/embed) on your own Linux machine, which needs no E2B account.
 - **Not exactly-once.** Answers are deduplicated and old executors are fenced off, but the step that was running at the moment of a crash may run again. Make external side effects idempotent.
 
-## Roadmap
+## Design
 
-| Milestone | Scope |
-|---|---|
-| M0 · Contracts | Layer interfaces, the driver protocol, conformance scenarios |
-| M1 · Local | `roost up` on Docker with Claude Code, the Telegram adapter, the CLI |
-| M2 · Resilience | Watchdog, step checkpoints and turn snapshots, upgrades without restarts |
-| M3 · Launch | E2B Cloud and E2B Embed, Codex, Slack and Feishu adapters |
+- [RFC 0001: a durable runtime for agent SDKs](docs/rfcs/0001-durable-agent-runtime.md): the model, where state lives, and why.
+- [Contracts](docs/specs/contracts.md): the API, invariants, Kit support and conformance scenarios.
 
 ## License
 
