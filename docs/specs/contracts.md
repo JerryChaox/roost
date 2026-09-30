@@ -174,6 +174,7 @@ workspace:
   assign: per-owner              # per-owner | per-conversation | per-channel-chat
   idle: { sleep_after: 15m }
   upgrade: next-turn             # next-turn | now
+  recover_wait: 2m               # how long to wait for an unreachable sandbox before rebinding
 snapshot:
   store: s3://bucket             # s3:// | gs:// | file://
   max_interval: 10m
@@ -215,9 +216,11 @@ Every backend and every change to the core must pass these, against a local stac
 4. Killing the agent process mid-turn resumes the turn at the last completed step.
 5. Killing the sandbox mid-turn restores the last snapshot on a new sandbox, and every conversation resumes from its session in that snapshot.
 6. An upgrade applied at a turn boundary keeps the workspace's files and every conversation's session.
-7. With two conversations busy without a break, a snapshot is still taken within `snapshot.max_interval`, and restoring it leaves each conversation's session consistent with the files.
-8. Two conversations in one workspace share files but not sessions or reply routes.
-9. Two tenants never share a binding, snapshot prefix, credential or cache entry.
-10. A Kit requiring an unsupported capability is rejected before any sandbox exists.
-11. A failed channel delivery does not mark a turn as answered, and a retry never replies into another conversation.
-12. Credentials injected by roost are absent from every snapshot.
+7. A sandbox that is paused or unreachable and comes back within `workspace.recover_wait` is reused: no snapshot is restored and no completed step is redone.
+8. A sandbox that comes back after its workspace was rebound is killed and never receives another request.
+9. With two conversations busy without a break, a snapshot is still taken within `snapshot.max_interval`, and restoring it leaves each conversation's session consistent with the files.
+10. Two conversations in one workspace share files but not sessions or reply routes.
+11. Two tenants never share a binding, snapshot prefix, credential or cache entry.
+12. A Kit requiring an unsupported capability is rejected before any sandbox exists.
+13. A failed channel delivery does not mark a turn as answered, and a retry never replies into another conversation.
+14. Credentials injected by roost are absent from every snapshot.

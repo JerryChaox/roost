@@ -69,7 +69,7 @@ Only Workspace, Conversation and Turn appear in the public vocabulary.
 | Access | Channel adapters (Feishu, Slack, Telegram) and the conversation API | Each message gets in once. Replies return to the thread they came from. |
 | Workspace | Binds a workspace to a sandbox; wakes it on demand, lets it sleep, replaces it to recover or upgrade | The workspace survives any sandbox; at worst the work since the last snapshot is redone. Idle agents cost nothing. Upgrades don't restart conversations. |
 | Conversation | Deduplicates, queues and batches messages into turns; issues and revokes grants | Answered once, even when delivered twice. One turn at a time. One live executor. |
-| Turn | Runs one agent process per turn and watches it | Streams live. A hung turn recovers on its own. Process dies: resume at the step. Machine dies: resume from the last snapshot. |
+| Turn | Runs one agent process per turn and watches it | Streams live. A hung turn recovers on its own. Process dies: resume at the step. Sandbox comes back: continue where it stopped. Sandbox gone: resume from the last snapshot. |
 | Infrastructure | Sandboxes (Docker, E2B Cloud, E2B Embed), state (SQLite, Postgres), snapshots (S3, GCS, local directory) | Swap a provider and nothing above changes. |
 
 Operations run across every layer through the `roost` CLI.
@@ -97,13 +97,16 @@ Rules:
 - **Credentials that roost injects are never persisted.** They live on tmpfs or are injected by an egress proxy.
 - **One kopia repository per workspace.** Its key is present inside the sandbox; sharing a repository across workspaces would break the workspace trust boundary.
 
-Recovery:
+Recovery always uses the freshest state that survived; the snapshot is the last resort:
 
-| Failure | Recovery |
-|---|---|
-| Agent process dies or hangs | Kill it; start a new process that resumes the SDK session at the last completed step |
-| Sandbox or machine is lost | Start a new sandbox and restore the last snapshot; every conversation resumes from its session in that snapshot, and a step that was running at the time may repeat |
-| Upgrade | At a turn boundary, start a sandbox from the new template and restore the latest snapshot |
+| Failure | Recovery | Work redone |
+|---|---|---|
+| Agent process dies or hangs | Kill it; start a new process in the same sandbox that resumes the SDK session at the last completed step | At most the step that was running |
+| Sandbox paused, restarted or unreachable, with its disk intact | Reconnect to the same sandbox. A paused E2B sandbox resumes with its processes and memory, and the turn simply continues; if the processes are gone, the turn resumes at the last completed step from the local shadow repository and session | None, or the step that was running |
+| Sandbox gone, or not back within `recover_wait` | Rebind the workspace to a new sandbox (next generation) and restore the last snapshot; every conversation resumes from its session in that snapshot | The work since the last snapshot |
+| Upgrade | At a turn boundary, start a sandbox from the new template and restore the latest snapshot | None |
+
+A sandbox that comes back after its workspace was rebound is never used again: the control plane finds it by its labels and kills it. By then its leases have lapsed and nothing it uploads is chosen for a restore.
 
 ## Sandboxes
 
