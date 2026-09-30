@@ -69,7 +69,7 @@ Only Workspace, Conversation and Turn appear in the public vocabulary.
 | Access | Channel adapters (Feishu, Slack, Telegram) and the conversation API | Each message gets in once. Replies return to the thread they came from. |
 | Workspace | Binds a workspace to a sandbox; wakes it on demand, lets it sleep, replaces it to recover or upgrade | The workspace survives any sandbox; at worst the work since the last snapshot is redone. Idle agents cost nothing. Upgrades don't restart conversations. |
 | Conversation | Deduplicates, queues and batches messages into turns; issues and revokes grants | Answered once, even when delivered twice. One turn at a time. One live executor. |
-| Turn | Runs one agent process per turn and watches it | Streams live. A hung turn recovers on its own. Process dies: resume at the step. Sandbox comes back: continue where it stopped. Sandbox gone: resume from the last snapshot. |
+| Turn | Runs the conversation's agent session through the official SDK and watches it | Streams live. A hung turn recovers on its own. Process dies: resume at the step. Sandbox comes back: continue where it stopped. Sandbox gone: resume from the last snapshot. |
 | Infrastructure | Sandboxes (Docker, E2B Cloud, E2B Embed), state (SQLite, Postgres), snapshots (S3, GCS, local directory) | Swap a provider and nothing above changes. |
 
 Operations run across every layer through the `roost` CLI.
@@ -133,19 +133,23 @@ roost's own configuration (`roost.yaml`) covers only what Kits cannot: how works
 - **Channel adapters** receive webhooks directly. The adapter derives the conversation id from the channel's natural keys, records the reply route when the conversation is created, and streams replies back as plain text by editing one message.
 - **The conversation API** serves channel-less applications such as websites. The application creates and lists conversations by its own user id (`owner`), sends messages with an idempotency key, and reads events over SSE.
 
-## Turns and harnesses
+## Turns and agent sessions
 
-- Each turn runs one agent process: `claude -p --resume <session> --output-format stream-json` or `codex exec resume <session> --json`. The process exits when the turn ends, so idle conversations hold no memory.
-- Output is streamed line by line from the process and forwarded as events.
-- A conversation that receives messages while busy queues and batches them by default; it can be configured to interrupt the running turn, or (Claude Code) to inject into it over stdin.
+- The driver runs agents through their official TypeScript SDKs: the Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) and the Codex SDK (`@openai/codex-sdk`). They are the supported interface; the stdio protocol between each SDK and its CLI is not.
+- Starting an agent CLI costs seconds however it is done, so a conversation's session stays alive between turns. The driver closes it after `session.idle_timeout` and caps the number of live sessions per sandbox, closing the least recently used first. The next turn resumes the closed session from its files (`resume` in the Claude SDK, `resumeThread` in the Codex SDK).
+- When a message lands in a conversation's inbox, the control plane asks the driver to warm the session, so the start-up overlaps the batch window.
+- SDK output is forwarded as events as it arrives, including partial text.
+- A conversation that receives messages while busy queues and batches them by default; it can be configured to interrupt the running turn, or (Claude Code) to inject into it.
 - The watchdog uses two clocks: liveness (any activity) and progress (any renderable output). Escalation is persisted: restart the process, then replace the sandbox, then give up and mark the turn for attention. A wall-clock ceiling marks the turn for attention without killing anything.
 
 ## Processes
 
 - **`roost`** is the CLI and the control plane. One process, SQLite by default, Postgres for more.
-- **`roost-driver`** is a small static binary embedded in `roost` and copied into every sandbox. It supervises agent processes, keeps the shadow repository and takes snapshots. Its hash and the protocol version form the runtime fingerprint; control-plane releases do not force sandbox replacement.
+- **`roost-driver`** is a TypeScript program compiled into a single executable, embedded in `roost` and copied into every sandbox. It hosts the agent SDKs, keeps the shadow repository and takes snapshots. Its hash and the protocol version form the runtime fingerprint; control-plane releases do not force sandbox replacement.
+- The driver and the agent run as different users. The SDKs run inside the driver; the agent CLIs they start, and every tool those CLIs run, run as the agent's user (through `spawnClaudeCodeProcess` in the Claude SDK and `codexPathOverride` in the Codex SDK). Grants, epochs, the driver token and snapshot credentials therefore stay out of the agent's reach.
+- The wire types shared by the Go control plane and the TypeScript driver are generated from one schema.
 - The control plane reaches the driver through the provider's endpoint, so `roost` needs no public address.
-- The driver runs as a different user from the agent, and its control interface is not reachable by the agent.
+- The driver's control interface is not reachable by the agent.
 
 ## Operations
 
@@ -167,7 +171,10 @@ The `roost` CLI uses `roost <object> <verb>` and covers every layer: `status`, `
 | restic for snapshots | Not chosen | Comparable model, but no public Go packages and heavier repository maintenance |
 | Drive Firecracker directly | Deferred | E2B Embed already provides self-hosted Firecracker with the same API |
 | Keep a copy of sandbox state | Rejected | It is the provider's fact; a copy drifts |
-| Python control plane and driver | Replaced | A static Go driver needs nothing installed in the sandbox image, and one Go install covers the CLI and control plane |
+| Python control plane | Replaced | One Go install covers the CLI and the control plane |
+| One agent process per turn | Rejected | Starting an agent CLI costs seconds; sessions stay warm between turns instead |
+| Go driver speaking each CLI's stdio protocol | Rejected | That protocol is undocumented; the SDKs are the supported interface |
+| Go driver plus a separate TypeScript process hosting the SDKs | Rejected | One more process and one more protocol, for no isolation gain: the SDK host does not have to share the agent's user |
 
 ## Roadmap
 
@@ -192,5 +199,7 @@ To verify before M0 is closed:
 - E2B template builds from Kit images: the `agent` user (uid 1000) against E2B's default `user`, and private GHCR images.
 - E2B Embed end to end on a KVM host.
 - STS credentials scoped to a workspace prefix on RustFS, for local tests.
-- `claude --resume` after the process is killed mid-tool; `codex exec resume` behaviour and stream granularity.
+- Resuming a Claude session after its CLI is killed mid-tool; resuming a Codex thread the same way; Codex stream granularity.
+- The driver compiled into one executable (`bun build --compile`) with both SDKs, starting their native CLIs inside a sandbox as another user.
+- Tool admission for Codex: its SDK has no per-tool callback like Claude's `canUseTool`, so a lapsed lease stops the Codex session instead of denying single tools.
 - kopia per-turn cost on a realistic workspace over 50 turns.

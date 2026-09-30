@@ -16,7 +16,7 @@ This document is the normative contract between roost and the things around it: 
 | Conversation | `<adapter>:<natural key>` for channels (e.g. `slack:C123:1712.0000`, `feishu:oc_x:om_y`, `telegram:123456:42`); `api:<ulid>` for the conversation API | roost |
 | Message | Caller-supplied, unique per conversation; it is the idempotency key | Caller or adapter |
 | Turn | `<conversation>/<ulid>` | roost |
-| Grant | Workspace generation + conversation token; internal | roost |
+| Grant | Workspace generation + conversation epoch (an integer raised on every takeover); internal | roost |
 
 A conversation's workspace and tenant are fixed when it is created and MUST NOT change.
 
@@ -124,7 +124,7 @@ Backends in v1alpha1: `docker`, `e2b` (E2B Cloud or E2B Embed, selected by API U
 
 - Kits follow the Docker Sandbox Kit Specification v3. roost resolves and assembles the workspace's Kits, builds a template from the assembled image, and caches the template id by the digest of the resolved Kit set.
 - `volume@1` paths are the persistent paths: they are what the shadow repository and snapshots cover.
-- `agent-sessions@1` argv templates are how the driver starts and resumes the agent.
+- Claude Code and Codex are run through their SDKs. `agent-sessions@1` argv templates are reserved for agent CLIs that have no SDK.
 
 Capability support:
 
@@ -185,6 +185,9 @@ snapshot:
 conversation:
   when_busy: queue               # queue | interrupt | inject
   batch_window: 2s
+session:
+  idle_timeout: 10m              # close a warm agent session after this long without a turn
+  max_live: 6                    # per sandbox; least recently used closes first
 turn:
   watchdog: { first_output: 90s, stall: 180s, ceiling: 3h }
   retries: { restart_process: 1, replace_sandbox: 4 }

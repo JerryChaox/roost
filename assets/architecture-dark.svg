@@ -110,6 +110,6 @@
 <text x="40" y="764" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="600" fill="#E6EDF3" text-anchor="start">roost</text>
 <text x="88" y="764" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#9198A1" text-anchor="start">control plane + CLI</text>
 <text x="250" y="764" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="600" fill="#E6EDF3" text-anchor="start">roost-driver</text>
-<text x="352" y="764" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#9198A1" text-anchor="start">runs each turn inside the sandbox</text>
+<text x="352" y="764" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#9198A1" text-anchor="start">hosts the agent SDKs inside the sandbox</text>
 <text x="1160" y="764" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#F08A4B" text-anchor="end">orange commands change state</text>
 </svg>

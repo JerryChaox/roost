@@ -42,7 +42,7 @@ Each level makes its own promise:
 | Access | Channel webhooks and the conversation API | Each message gets in once. Replies go back to the thread they came from. |
 | Workspace | Checkpoints files and agent sessions after every step, and snapshots the whole workspace to object storage after turns; wakes a sandbox on demand, lets it sleep when idle, and swaps it to recover or upgrade | The workspace survives any sandbox: at worst, the work since the last snapshot is redone. Idle agents cost nothing. Upgrades don't restart conversations. |
 | Conversation | Deduplicates, queues and batches messages into turns; grants the right to execute | Answered once, even when delivered twice. One turn at a time, one live executor. |
-| Turn | Runs one `claude` or `codex` process per turn and watches it | Streams live. A hung turn recovers on its own. If the process dies, it resumes at the step. If the sandbox comes back, it continues where it stopped; if the sandbox is gone, it resumes from the last snapshot. |
+| Turn | Runs the conversation's Claude Code or Codex session through the official SDKs, keeps it warm between turns, and watches it | Streams live. A hung turn recovers on its own. If the process dies, it resumes at the step. If the sandbox comes back, it continues where it stopped; if the sandbox is gone, it resumes from the last snapshot. |
 | Infrastructure | Docker, or E2B Firecracker microVMs (E2B Cloud, or E2B Embed on your own machine) for sandboxes; SQLite or Postgres for state; S3, GCS or a local directory for snapshots | Swap a provider and nothing above changes. |
 
 Isolation is by tenant: data, credentials and snapshots never cross a tenant. Inside one workspace, conversations are separated logically but trust each other, the same way two terminal windows on one machine do.
@@ -85,7 +85,7 @@ Commands that change state need an operator token and a `--reason`, support `--d
 ## Two binaries
 
 - **`roost`** is the CLI and the control plane: access, conversations and workspaces. One process with SQLite by default, Postgres when you need it.
-- **`roost-driver`** is a small static binary that `roost` copies into every sandbox. It runs each turn as a `claude` or `codex` subprocess. Nothing needs to be installed in your sandbox image.
+- **`roost-driver`** is a single executable, written in TypeScript, that `roost` copies into every sandbox. It hosts the Claude Agent SDK and the Codex SDK, keeps each conversation's agent session warm between turns, and closes it when idle.
 
 The control plane reaches the driver through the sandbox provider, so `roost` can run on your laptop without a public address.
 
