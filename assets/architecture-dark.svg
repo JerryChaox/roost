@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" role="img" aria-label="roost architecture: access, conversation, turn, workspace and infrastructure layers, with operations across all of them">
+<rect width="1200" height="800" fill="#0D1117"/>
+<text x="40" y="44" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="600" fill="#9198A1" text-anchor="start" letter-spacing="1.5">INBOUND</text>
+<rect x="40" y="56" width="390" height="44" rx="10" fill="none" stroke="#30363D" stroke-dasharray="5 4"/>
+<text x="56" y="84" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#E6EDF3" text-anchor="start">Feishu · Slack · Telegram</text>
+<text x="414" y="84" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="400" fill="#9198A1" text-anchor="end">webhooks</text>
+<path d="M235 104 V126" stroke="#9198A1" stroke-width="1.5"/><path d="M230 120 L235 128 L240 120" fill="none" stroke="#9198A1" stroke-width="1.5"/>
+<rect x="470" y="56" width="430" height="44" rx="10" fill="none" stroke="#30363D" stroke-dasharray="5 4"/>
+<text x="486" y="84" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#E6EDF3" text-anchor="start">Websites · your backend</text>
+<text x="884" y="84" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" font-weight="400" fill="#9198A1" text-anchor="end">conversation API</text>
+<path d="M685 104 V126" stroke="#9198A1" stroke-width="1.5"/><path d="M680 120 L685 128 L690 120" fill="none" stroke="#9198A1" stroke-width="1.5"/>
+<rect x="924" y="110" width="236" height="602" rx="14" fill="#1B222C"/>
+<text x="942" y="130" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="600" fill="#E6EDF3" text-anchor="start" letter-spacing="1">OPERATE · roost CLI</text>
+<rect x="26" y="252" width="888" height="348" rx="16" fill="none" stroke="#6E7681" stroke-width="1.5" stroke-dasharray="6 5"/>
+<rect x="46" y="242" width="405" height="20" fill="#0D1117"/>
+<text x="56" y="256" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="500" fill="#9198A1" text-anchor="start">tenant · data, credentials and snapshots never cross</text>
+<rect x="40" y="140" width="860" height="96" rx="12" fill="none" stroke="#30363D" stroke-dasharray="5 4"/>
+<path d="M290 156 V220" stroke="#30363D"/>
+<text x="60" y="182" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#E6EDF3" text-anchor="start">Access</text>
+<text x="60" y="206" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#9198A1" text-anchor="start">channel adapters · conversation API</text>
+<rect x="316" y="171" width="6" height="6" rx="1.5" fill="#F08A4B"/>
+<text x="332" y="180" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15.5" font-weight="500" fill="#E6EDF3" text-anchor="start">Each message gets in once.</text>
+<rect x="316" y="199" width="6" height="6" rx="1.5" fill="#F08A4B"/>
+<text x="332" y="208" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15.5" font-weight="400" fill="#E6EDF3" text-anchor="start">Replies return to the thread they came from.</text>
+<text x="942" y="170" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="500" fill="#E6EDF3" text-anchor="start">channel status</text>
+<path d="M902 188 H922" stroke="#30363D" stroke-dasharray="2 4"/>
+<rect x="40" y="270" width="860" height="96" rx="12" fill="#161B22" stroke="#30363D"/>
+<path d="M290 286 V350" stroke="#30363D"/>
+<text x="60" y="312" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#E6EDF3" text-anchor="start">Conversation</text>
+<text x="60" y="336" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#9198A1" text-anchor="start">inbox + execution grant</text>
+<rect x="316" y="301" width="6" height="6" rx="1.5" fill="#F08A4B"/>
+<text x="332" y="310" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15.5" font-weight="500" fill="#E6EDF3" text-anchor="start">Answered once, even when delivered twice.</text>
+<rect x="316" y="329" width="6" height="6" rx="1.5" fill="#F08A4B"/>
+<text x="332" y="338" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15.5" font-weight="400" fill="#E6EDF3" text-anchor="start">One turn at a time. One live executor.</text>
+<text x="942" y="300" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="500" fill="#E6EDF3" text-anchor="start">conv inspect</text>
+<text x="942" y="324" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="500" fill="#E6EDF3" text-anchor="start">conv timeline</text>
+<text x="942" y="348" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="500" fill="#F08A4B" text-anchor="start">conv reset</text>
+<path d="M902 318 H922" stroke="#30363D" stroke-dasharray="2 4"/>
+<rect x="40" y="380" width="860" height="96" rx="12" fill="#161B22" stroke="#30363D"/>
+<path d="M290 396 V460" stroke="#30363D"/>
+<text x="60" y="422" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#E6EDF3" text-anchor="start">Turn</text>
+<text x="60" y="446" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#9198A1" text-anchor="start">one claude / codex process</text>
+<rect x="316" y="411" width="6" height="6" rx="1.5" fill="#F08A4B"/>
+<text x="332" y="420" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15.5" font-weight="500" fill="#E6EDF3" text-anchor="start">Streams live. A hung turn recovers on its own.</text>
+<rect x="316" y="439" width="6" height="6" rx="1.5" fill="#F08A4B"/>
+<text x="332" y="448" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15.5" font-weight="400" fill="#E6EDF3" text-anchor="start">Process dies: resume at the step. Machine dies: replay the turn.</text>
+<text x="942" y="410" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="500" fill="#E6EDF3" text-anchor="start">turn logs</text>
+<text x="942" y="434" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="500" fill="#F08A4B" text-anchor="start">turn retry</text>
+<path d="M902 428 H922" stroke="#30363D" stroke-dasharray="2 4"/>
+<rect x="40" y="490" width="860" height="96" rx="12" fill="#161B22" stroke="#30363D"/>
+<path d="M290 506 V570" stroke="#30363D"/>
+<text x="60" y="532" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#E6EDF3" text-anchor="start">Workspace</text>
+<text x="60" y="556" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#9198A1" text-anchor="start">the agent's computer</text>
+<rect x="316" y="521" width="6" height="6" rx="1.5" fill="#F08A4B"/>
+<text x="332" y="530" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15.5" font-weight="500" fill="#E6EDF3" text-anchor="start">Sandboxes come and go. The workspace stays.</text>
+<rect x="316" y="549" width="6" height="6" rx="1.5" fill="#F08A4B"/>
+<text x="332" y="558" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15.5" font-weight="400" fill="#E6EDF3" text-anchor="start">Sleeps when idle. Upgrades without a restart.</text>
+<text x="942" y="520" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="500" fill="#E6EDF3" text-anchor="start">ws inspect</text>
+<text x="942" y="544" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="500" fill="#F08A4B" text-anchor="start">ws recover</text>
+<path d="M902 538 H922" stroke="#30363D" stroke-dasharray="2 4"/>
+<rect x="40" y="616" width="860" height="96" rx="12" fill="none" stroke="#30363D"/>
+<path d="M290 632 V696" stroke="#30363D"/>
+<text x="60" y="658" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#E6EDF3" text-anchor="start">Infrastructure</text>
+<text x="60" y="682" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#9198A1" text-anchor="start">pluggable adapters</text>
+<rect x="316" y="647" width="6" height="6" rx="1.5" fill="#F08A4B"/>
+<text x="332" y="656" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15.5" font-weight="500" fill="#E6EDF3" text-anchor="start">Swap providers. Nothing above changes.</text>
+<rect x="316" y="675" width="6" height="6" rx="1.5" fill="#F08A4B"/>
+<text x="332" y="684" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15.5" font-weight="400" fill="#E6EDF3" text-anchor="start">Sandbox: Docker, E2B · State: SQLite, Postgres · Snapshots: FS, S3</text>
+<text x="942" y="646" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="500" fill="#E6EDF3" text-anchor="start">doctor</text>
+<path d="M902 664 H922" stroke="#30363D" stroke-dasharray="2 4"/>
+<text x="40" y="766" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="600" fill="#E6EDF3" text-anchor="start">roost</text>
+<text x="92" y="766" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#9198A1" text-anchor="start">CLI + control plane: access, conversations, workspaces</text>
+<text x="560" y="766" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="600" fill="#E6EDF3" text-anchor="start">roost-driver</text>
+<text x="668" y="766" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#9198A1" text-anchor="start">runs each turn inside the sandbox</text>
+<text x="1160" y="766" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#F08A4B" text-anchor="end">orange = changes state</text>
+</svg>

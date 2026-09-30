@@ -1,107 +1,115 @@
-# roost
+<p align="center">
+  <img src="assets/roost-teaser.gif" width="760" alt="A sandbox is killed and the conversation continues on a new one; a message delivered twice is answered once; a hung turn resumes at the step it stopped on; a thousand idle conversations run on three sandboxes.">
+</p>
 
-Durable, exactly-once agent sessions on disposable sandboxes.
+<h1 align="center">roost</h1>
 
-A session is a migratory bird: it can perch anywhere and stay itself. The sandbox
-is just tonight's roost — destroy it, replace it, upgrade it, and the session
-lives on.
+<p align="center">
+  <b>A durable runtime for Claude Code and Codex.</b><br>
+  A workspace that never dies. An agent that never answers twice.
+</p>
+
+> [!NOTE]
+> roost is being rewritten in Go. This README describes the design being built; the code currently on `main` is the earlier Python prototype and is being replaced. Nothing below is released yet.
 
 ## Why
 
-E2B, Modal and friends solve "give me a sandbox". They don't solve what a
-message-triggered agent actually needs from one:
+You put Claude Code or Codex behind a chat: every user gets an agent, every agent gets a sandbox. Then production happens.
 
-- Your queue delivers at-least-once, so the same message will eventually arrive
-  twice — and an agent that answers twice is broken in a way users notice.
-- Sandboxes die, get paused, get garbage-collected. The conversation must not.
-- You will ship a new runtime version while conversations are in flight, and
-  "please start a new chat" is not an upgrade strategy.
-- Sometimes the agent process inside just hangs, and something has to notice,
-  kill it, and get the turn answered anyway.
+- **Sandboxes die.** They time out, get paused, crash. The conversation's files and context go with them.
+- **Webhooks retry.** The same message arrives twice, and the agent answers twice.
+- **Agents hang.** A turn stalls halfway through a task and nobody notices.
+- **You ship upgrades.** Every live conversation has to start over.
+- **Users open more threads.** Either each thread gets its own sandbox and can't see the others' files, or two threads edit the same files at once.
 
-roost is that layer. It sits between your delivery queue and your sandbox
-provider, and holds three invariants:
+roost takes that off your hands. You talk to an agent by its address: send messages to a conversation, read events back. roost decides which sandbox it runs on, when it sleeps, how it comes back, and makes sure only one copy of it is ever running.
 
-| Invariant | Meaning | Proof |
+## How it works
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/architecture-dark.svg">
+  <img src="assets/architecture-light.svg" width="100%" alt="roost layers: access, conversation, turn, workspace and infrastructure, each with the guarantee it provides; operations run across all of them.">
+</picture>
+
+You only need three words:
+
+- **Workspace**: the agent's computer, a sandbox plus its files. Sandboxes are disposable; the workspace is not.
+- **Conversation**: a thread inside a workspace, with its own inbox and context. Several conversations can share one workspace and see the same files.
+- **Turn**: one run of the agent over the messages waiting in the inbox.
+
+Each layer makes one kind of promise:
+
+| Layer | What roost does | What you can rely on |
 |---|---|---|
-| **Exactly-once** | At-least-once delivery in, exactly one execution out. Deterministic turn ids, a CAS turn ledger on the host, and an idempotent turn registry inside the sandbox — re-runs are only ever legal on a fresh sandbox after an explicit requeue. | `cli_chat.py --duplicate` |
-| **Durability** | The sandbox is a cache; the workspace snapshot is the truth. Kill the container mid-conversation and the next message rebuilds it, state intact. | `cli_chat.py --counter` + `/kill` |
-| **Never worse off** | A stalled sandbox is detected, killed, and the turn re-answered on a fresh one. A runtime upgrade replaces the sandbox under the conversation via live snapshot and atomic rebind — and if the upgrade fails at any step, the old sandbox keeps answering as if nothing happened. | `cli_chat.py --hang-first`; forced-update e2e tests |
+| Access | Channel webhooks and the conversation API | Each message gets in once. Replies go back to the thread they came from. |
+| Conversation | Deduplicates, queues and batches messages into turns; grants the right to execute | Answered once, even when delivered twice. One turn at a time, one live executor. |
+| Turn | Runs one `claude` or `codex` process per turn and watches it | Streams live. A hung turn recovers on its own. If the process dies, it resumes at the step; if the machine dies, the turn is replayed. |
+| Workspace | Wakes a sandbox on demand, sleeps it when idle, snapshots, moves and upgrades it | The workspace survives any sandbox. Idle agents cost nothing. Upgrades don't restart conversations. |
+| Infrastructure | Docker or E2B for sandboxes, SQLite or Postgres for state, a filesystem or S3 for snapshots | Swap a provider and nothing above changes. |
 
-Everything above runs against a real local Docker daemon in this repo's test
-suite (200+ tests, CI on every push).
+Isolation is by tenant: data, credentials and snapshots never cross a tenant. Inside one workspace, conversations are separated logically but trust each other, the same way two terminal windows on one machine do.
 
-## Try it
+## Getting messages in
 
-Requires Python ≥ 3.11 and a running Docker daemon. The core library has zero
-runtime dependencies.
+**Chat channels.** Point a Feishu, Slack or Telegram webhook at roost. The adapter works out which conversation each message belongs to, and replies stream back into the same thread. You never handle a conversation ID.
+
+**Everything else**, such as a website. Your backend creates conversations for its own users and talks to them over HTTP (planned API):
 
 ```bash
-git clone https://github.com/JerryChaox/roost && cd roost
-python -m venv .venv && .venv/bin/pip install -e .
+# start a conversation for one of your users
+curl -X POST localhost:7070/v1/conversations -d '{"owner": "user-42"}'
+# {"id": "api:01J9Z..."}
 
-# Demo 1 — exactly-once: every message is delivered twice, answered once.
-.venv/bin/python examples/cli_chat.py --duplicate
+# list that user's conversations
+curl "localhost:7070/v1/conversations?owner=user-42"
 
-# Demo 2 — durability: the counter survives you destroying the sandbox.
-.venv/bin/python examples/cli_chat.py --counter --snapshot-dir /tmp/roost-snap
-#   you> tick            →  agent> tick counter=1
-#   you> /kill           →  docker rm -f <sandbox>
-#   you> tick            →  agent> tick counter=2   (fresh container, restored state)
-
-# Demo 3 — stall recovery: the first attempt hangs inside the sandbox. The
-# watchdog restarts the driver in place, then kills the sandbox when that does
-# not help, and the answer arrives from a fresh one.
-.venv/bin/python examples/cli_chat.py --hang-first --boot-grace 6 \
-    --liveness-quiet 3 --lock-seconds 2
+# send a message (the id makes retries safe), then stream the reply
+curl -X POST localhost:7070/v1/conversations/api:01J9Z.../messages -d '{"id": "m-1", "text": "hi"}'
+curl -N localhost:7070/v1/conversations/api:01J9Z.../events
 ```
 
-The demo agent is a deliberately boring echo harness — the point of these demos
-is the runtime semantics around it, which don't care what the agent is. The
-harness interface is pluggable; a Claude Agent SDK harness is on the roadmap
-before 0.1.
+By default each `owner` gets one workspace, so the same user's conversations share files.
 
-## How it sits in your stack
+## Operating it
 
-```
-your app            identity, routing, rendering, storage choice
-──── six ports ────────────────────────────────────────────────
-roost (host side)   session↔sandbox registry · turn pipeline ·
-                    watchdog · event reducer · forced update
-──── control protocol (loopback HTTP, PROTOCOL.md) ────────────
-roost driver        turn registry (idempotency) · harness runner ·
-(inside sandbox)    event log · workspace pack/restore
-──── harness ──────────────────────────────────────────────────
-your agent          Claude Agent SDK, or anything with a run() loop
-```
+The `roost` CLI covers every layer and is built for agents as much as for people: `--json` everywhere, stable schemas, meaningful exit codes, and a `SKILL.md` so Claude Code can run it.
 
-You inject six small interfaces — delivery queue, state store, snapshot store,
-sandbox backend, event sink, session context — and roost owns the lifecycle
-between them. Defaults ship for local use (in-process queue, SQLite, filesystem
-or S3-compatible snapshots, Docker sandboxes); swap any of them for your infra.
-The library never sees your domain: sessions, turns and snapshot keys are opaque
-strings, and host context rides through as an uninterpreted blob.
+| Layer | Look | Act |
+|---|---|---|
+| Access | `roost channel status` | |
+| Conversation | `roost conv inspect`, `roost conv timeline`, `roost conv transcript` | `roost conv reset` |
+| Turn | `roost turn logs` | `roost turn retry` |
+| Workspace | `roost ws inspect` | `roost ws recover` |
+| Everything | `roost status`, `roost doctor` | |
 
-## Status
+Commands that change state need an operator token and a `--reason`, support `--dry-run`, and are audited. The CLI only talks to the control plane API, and it is not available inside sandboxes.
 
-Pre-release, interfaces stabilizing. Implemented and tested today: the turn
-pipeline, SQLite and Postgres state stores (advisory-locked session mutex for
-multi-consumer hosts), in-process delivery, the driver and control protocol,
-Docker and E2B backends, filesystem/S3 snapshot stores, a production-grade
-watchdog (dual liveness/progress clocks, /proc activity probe, a persistent
-restart→kill→abandon ladder), fingerprint-driven zero-downtime updates, and a
-Claude Agent SDK harness whose session memory rides the workspace snapshot.
-Not yet: PyPI packaging, and the Claude harness still awaits its real-LLM
-acceptance run. See [ROADMAP.md](ROADMAP.md).
+## Two binaries
 
-## Read next
+- **`roost`** is the CLI and the control plane: access, conversations and workspaces. One process with SQLite by default, Postgres when you need it.
+- **`roost-driver`** is a small static binary that `roost` copies into every sandbox. It runs each turn as a `claude` or `codex` subprocess. Nothing needs to be installed in your sandbox image.
 
-- [DESIGN.md](DESIGN.md) — the mental model and the three invariants.
-- [PROTOCOL.md](PROTOCOL.md) — the wire contract, including the idempotency split
-  between host and driver.
-- [CONTRACTS.md](CONTRACTS.md) — pinned interfaces and the adjudication log of
-  every design decision made while porting this from a production system.
+The control plane reaches the driver through the sandbox provider, so `roost` can run on your laptop without a public address.
+
+## What roost is not
+
+- **Not an agent framework.** It runs Claude Code and Codex as they are; you don't rewrite your agent.
+- **Not a sandbox provider.** Bring Docker or E2B.
+- **Not exactly-once.** Answers are deduplicated and old executors are fenced off, but the step that was running at the moment of a crash may run again. Make external side effects idempotent.
+
+## Roadmap
+
+| Milestone | Scope |
+|---|---|
+| M0 · Contracts | Layer interfaces, the driver protocol, conformance scenarios |
+| M1 · Local | `roost up` on Docker with Claude Code, the Telegram adapter, the CLI |
+| M2 · Resilience | Watchdog, snapshots, upgrades without restarts |
+| M3 · Launch | E2B, Codex, Slack and Feishu adapters |
+
+## Background
+
+roost comes out of running Claude Code agents for real users in Feishu and Slack, where every failure listed under [Why](#why) happened in production. The Go rewrite keeps what worked there and leaves the rest behind.
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).
