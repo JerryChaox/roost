@@ -1,0 +1,10 @@
+[+  0.000s] >>> GET https://8080-igp6ksg7ri0xb8938kmel.e2b.app/idle-sse?s=330
+[+  0.715s] <<< 200 OK (715ms) GET /idle-sse
+    Content-Type: text/event-stream
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+  [recv +  0.715s @1791127932756] data: {"phase":"start","sentAt":1791127933485}
+  [recv +  0.715s @1791127932756] 
+  [recv +330.716s @1791128262749] data: {"phase":"after-idle","idleSec":330,"sentAt":1791128263486}
+  [recv +330.716s @1791128262749] 
+RESULT http-sse status=200 ended after 5m30.716s: EOF

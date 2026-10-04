@@ -1,0 +1,8 @@
+[+  0.000s] >>> GET https://8080-igp6ksg7ri0xb8938kmel.e2b.app/sleep?s=330
+[+330.704s] <<< 200 OK (5m30.704s) GET /sleep
+    Content-Type: text/plain; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: slept 330
+
+RESULT http status=200 elapsed=5m30.704s

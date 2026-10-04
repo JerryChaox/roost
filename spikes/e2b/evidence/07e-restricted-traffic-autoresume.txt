@@ -1,0 +1,51 @@
+[+  0.768s] <<< 200 OK (768ms) POST /process.Process/Start
+  [ 0.768s] start pid=1727
+RESULT exec bg-started pid=1727 (closing stream)
+### no token
+[+  0.000s] >>> GET https://8080-id0a6t911u2kxlo5oo7iz.e2b.app/health
+[+  0.778s] <<< 403 Forbidden (778ms) GET /health
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"sandboxId":"id0a6t911u2kxlo5oo7iz","message":"Sandbox is secured with traffic access token. Token header 'e2b-traffic-access-token' is missing","code":403}
+RESULT http status=403 elapsed=778ms
+### with e2b-traffic-access-token
+[+  0.000s] >>> GET https://8080-id0a6t911u2kxlo5oo7iz.e2b.app/health
+    E2b-Traffic-Access-Token: <redacted len=64>
+[+  0.685s] <<< 200 OK (685ms) GET /health
+    Content-Type: application/json
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"ok":true,"port":8080,"pid":1727,"uid":0,"user":"root","bootId":"6195d59f-a85f-4a7e-b556-91f7bf8c66dc","startedAt":1791127764985,"ticks":2,"uptimeSec":51.55,"grantSeen":null,"envStillHasGrant":false,"headers":{"host":"8080-id0a6t911u2kxlo5oo7iz.e2b.app","user-agent":"Go-http-client/2.0","accept-encoding":"gzip","e2b-traffic-access-token":"<redacted-forwarded-by-proxy>","via":"1.1 google","x-cloud-trace-context":"d5dd3b3ef449ac228f310467a674b5b0/10142304783425987517","x-request-id":"b13f7059-cd03-434a-8cc4-91aea11c93ff","connection":"close"}}
+
+RESULT http status=200 elapsed=685ms
+### pause, then port request without token
+[+  0.000s] >>> POST https://api.e2b.app/sandboxes/id0a6t911u2kxlo5oo7iz/pause
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {}
+[+  0.779s] <<< 204 No Content (779ms) POST /sandboxes/id0a6t911u2kxlo5oo7iz/pause
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+RESULT pause status=204 elapsed=779ms
+[+  0.000s] >>> GET https://8080-id0a6t911u2kxlo5oo7iz.e2b.app/health
+[+  0.693s] <<< 403 Forbidden (693ms) GET /health
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"sandboxId":"id0a6t911u2kxlo5oo7iz","message":"This sandbox can't be resumed with the credentials provided. Check your access token and try again.","code":403}
+RESULT http status=403 elapsed=693ms
+[+  0.676s] <<< 200 OK (676ms) GET /sandboxes/id0a6t911u2kxlo5oo7iz
+RESULT get state=paused endAt=2026-10-04T15:29:28Z
+### port request with token on paused sandbox (autoResume enabled)
+[+  0.000s] >>> GET https://8080-id0a6t911u2kxlo5oo7iz.e2b.app/health
+    E2b-Traffic-Access-Token: <redacted len=64>
+[+  1.097s] <<< 200 OK (1.097s) GET /health
+    Content-Type: application/json
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"ok":true,"port":8080,"pid":1727,"uid":0,"user":"root","bootId":"6195d59f-a85f-4a7e-b556-91f7bf8c66dc","startedAt":1791127764985,"ticks":3,"uptimeSec":52.33,"grantSeen":null,"envStillHasGrant":false,"headers":{"host":"8080-id0a6t911u2kxlo5oo7iz.e2b.app","user-agent":"Go-http-client/2.0","accept-encoding":"gzip","e2b-traffic-access-token":"<redacted-forwarded-by-proxy>","via":"1.1 google","x-cloud-trace-context":"cc657516727def346067521363bd1f87/13592993207810627114","x-request-id":"568ac09d-4318-4236-9f53-b9f5a90ee2fa","connection":"close"}}
+
+RESULT http status=200 elapsed=1.097s
+[+  0.815s] <<< 200 OK (814ms) GET /sandboxes/id0a6t911u2kxlo5oo7iz
+RESULT get state=running endAt=2026-10-04T15:44:30Z

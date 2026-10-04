@@ -1,0 +1,35 @@
+# roost.yaml for roost serve on E2B Cloud (contracts §13). Unknown keys are
+# errors. Secrets are secret://<name> references, resolved from the
+# environment variable ROOST_SECRET_<NAME> (upper case, "-" becomes "_"):
+# secret://e2b is ROOST_SECRET_E2B, secret://acme-api-key is
+# ROOST_SECRET_ACME_API_KEY. file:// paths are relative to this file.
+server:
+  listen: 127.0.0.1:7070
+  database: sqlite:///var/lib/roost/roost.db
+
+workspace:
+  provider: { api_url: https://api.e2b.app, api_key: secret://e2b }
+  # kits: []                 # must stay empty in this version: one fixed template
+  # sleep_after, recover_wait, quiesce_wait: accepted, not acted on yet
+
+agent:
+  model: anthropic/claude-sonnet-4-5   # <provider>/<model id>, from the agent's catalog
+  thinking: high
+  # Required for a model the agent's own catalog does not know, for example one
+  # served by an LLM gateway:
+  # model_info: { context_window: 1000000, max_output_tokens: 32768, reasoning: true, input: [text] }
+  system_prompt:
+    base: pi                 # pi: Pi's own system prompt; none: start empty
+    # append: file://./prompts/extra.md   # optional, added after the base
+
+models:
+  access: e2b                # E2B's egress proxy injects the providers' keys
+  providers:
+    # base_url is optional (default: the provider's official URL); the key is
+    # injected as x-api-key (anthropic) or Authorization: Bearer (openai) for
+    # requests to its host, and never enters the sandbox.
+    anthropic: { key: secret://anthropic }   # or through a gateway: base_url: https://llm-gateway.example.com/anthropic
+
+tenants:
+  acme:
+    api_keys: [secret://acme-api-key]

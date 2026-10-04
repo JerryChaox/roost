@@ -1,0 +1,28 @@
+[+  0.000s] >>> POST https://api.e2b.app/v2/sandboxes/igp6ksg7ri0xb8938kmel/connect
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"timeout":900}
+[+  1.235s] <<< 201 Created (1.234s) POST /v2/sandboxes/igp6ksg7ri0xb8938kmel/connect
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","envdAccessToken":"<redacted len=64>","envdVersion":"0.9.0","sandboxID":"igp6ksg7ri0xb8938kmel","templateID":"uh60ctbk06f4mrwuv6d6"}
+RESULT connect status=201 elapsed=1.235s
+[+  0.000s] >>> POST https://api.e2b.app/v2/sandboxes/igp6ksg7ri0xb8938kmel/connect
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"timeout":900}
+[+  0.764s] <<< 200 OK (764ms) POST /v2/sandboxes/igp6ksg7ri0xb8938kmel/connect
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","envdAccessToken":"<redacted len=64>","envdVersion":"0.9.0","sandboxID":"igp6ksg7ri0xb8938kmel","templateID":"uh60ctbk06f4mrwuv6d6"}
+RESULT connect status=200 elapsed=764ms
+[+  0.702s] <<< 200 OK (701ms) POST /process.Process/Start
+  [ 0.702s] start pid=1525
+  [ 0.709s] stdout| 6195d59f-a85f-4a7e-b556-91f7bf8c66dc
+  [ 1.005s] stdout| 66.92
+  [ 1.027s] stdout| {"ok":true,"port":9000,"pid":351,"uid":1001,"user":"user","bootId":"6195d59f-a85f-4a7e-b556-91f7bf8c66dc","startedAt":1791127434946,"ticks":58,"uptimeSec":66.94,"grantSeen":null,"envStillHasGrant":fal
+  [ 1.029s] stdout| 
+  [ 1.031s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=1.031s

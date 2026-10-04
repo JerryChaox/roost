@@ -1,0 +1,52 @@
+[+  0.675s] <<< 200 OK (675ms) POST /process.Process/Start
+  [ 0.675s] start pid=379
+RESULT exec bg-started pid=379 (closing stream)
+[+  0.780s] <<< 200 OK (779ms) POST /process.Process/Start
+  [ 0.780s] start pid=380
+  [ 0.879s] stdout| done
+  [ 0.882s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=882ms
+[+  0.000s] >>> POST https://api.e2b.app/sandboxes/igp6ksg7ri0xb8938kmel/pause
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"memory":false}
+[+  0.845s] <<< 204 No Content (845ms) POST /sandboxes/igp6ksg7ri0xb8938kmel/pause
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+RESULT pause status=204 elapsed=845ms
+[+  0.000s] >>> GET https://api.e2b.app/sandboxes/igp6ksg7ri0xb8938kmel
+    X-Api-Key: <redacted len=44>
+[+  0.773s] <<< 200 OK (773ms) GET /sandboxes/igp6ksg7ri0xb8938kmel
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","cpuCount":1,"diskSizeMB":11798,"endAt":"2026-10-04T15:27:45.758755Z","envdAccessToken":"<redacted len=64>","envdVersion":"0.9.0","lifecycle":{"autoResume":false,"onTimeout":"pause"},"memoryMB":512,"metadata":{"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q1"},"sandboxID":"igp6ksg7ri0xb8938kmel","startedAt":"2026-10-04T15:27:22.538668Z","state":"paused","templateID":"uh60ctbk06f4mrwuv6d6"}
+RESULT get state=paused endAt=2026-10-04T15:27:45Z
+[+  0.000s] >>> GET https://8080-igp6ksg7ri0xb8938kmel.e2b.app/health
+[+  0.768s] <<< 502 Bad Gateway (767ms) GET /health
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"sandboxId":"igp6ksg7ri0xb8938kmel","message":"The sandbox was not found","code":502}
+RESULT http status=502 elapsed=767ms
+[+  0.000s] >>> POST https://api.e2b.app/v2/sandboxes/igp6ksg7ri0xb8938kmel/connect
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"timeout":900}
+[+  1.888s] <<< 201 Created (1.888s) POST /v2/sandboxes/igp6ksg7ri0xb8938kmel/connect
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","envdAccessToken":"<redacted len=64>","envdVersion":"0.9.0","sandboxID":"igp6ksg7ri0xb8938kmel","templateID":"uh60ctbk06f4mrwuv6d6"}
+RESULT connect status=201 elapsed=1.889s
+[+  0.653s] <<< 200 OK (653ms) POST /process.Process/List
+RESULT ps count=0
+[+  0.682s] <<< 200 OK (682ms) POST /process.Process/Start
+  [ 0.682s] start pid=376
+  [ 0.708s] stdout| bootId=0f96d8ec-decc-481c-a4cb-335c9462d980 uptime=2.35
+  [ 0.713s] stdout| fsonly-synced.txt
+  [ 0.713s] stdout| fsonly-unsynced.txt
+  [ 0.713s] stdout| synced.txt
+  [ 0.713s] stdout| unsynced.txt
+  [ 0.715s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=715ms

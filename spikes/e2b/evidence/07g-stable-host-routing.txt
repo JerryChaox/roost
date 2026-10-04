@@ -1,0 +1,4 @@
+{"ok":true,"port":8080,"pid":379,"uid":0,"user":"root","bootId":"0f96d8ec-decc-481c-a4cb-335c9462d980","startedAt":1791127691764,"ticks":464,"uptimeSec":488.78,"grantSeen":null,"envStillHasGrant":false,"headers":{"host":"8080-igp6ksg7ri0xb8938kmel.e2b.app","user-agent":"curl/8.7.1","accept":"*/*","e2b-sandbox-id":"igp6ksg7ri0xb8938kmel","e2b-sandbox-port":"8080","via":"1.1 google","x-cloud-trace-context":"239be87b08973dac43f36e9814c227a5/8165637162906887564","x-request-id":"ab365367-4f68-4839-bc57-d6311681536a","connection":"close"}}
+
+HTTP 200 0.895106s
+

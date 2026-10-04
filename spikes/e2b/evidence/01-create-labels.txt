@@ -1,0 +1,31 @@
+[+  0.000s] >>> POST https://api.e2b.app/v2/sandboxes
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"templateID":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","timeout":60,"autoPause":true,"autoResume":{"enabled":false},"metadata":{"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q1"},"envVars":{"ROOST_EXAMPLE":"from-create"}}
+[+  2.267s] <<< 201 Created (2.267s) POST /v2/sandboxes
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","envdAccessToken":"<redacted len=64>","envdVersion":"0.9.0","sandboxID":"igp6ksg7ri0xb8938kmel","templateID":"uh60ctbk06f4mrwuv6d6"}
+RESULT create sandboxID=igp6ksg7ri0xb8938kmel status=201 elapsed=2.268s
+ID=igp6ksg7ri0xb8938kmel
+[+  0.803s] <<< 200 OK (802ms) GET /v2/sandboxes
+RESULT poll-list id=igp6ksg7ri0xb8938kmel state=running reached after 803ms (1 polls)
+[+  0.000s] >>> GET https://api.e2b.app/sandboxes/igp6ksg7ri0xb8938kmel
+    X-Api-Key: <redacted len=44>
+[+  0.693s] <<< 200 OK (693ms) GET /sandboxes/igp6ksg7ri0xb8938kmel
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","cpuCount":1,"diskSizeMB":11798,"endAt":"2026-10-04T15:25:21.951759136Z","envdAccessToken":"<redacted len=64>","envdVersion":"0.9.0","lifecycle":{"autoResume":false,"onTimeout":"pause"},"memoryMB":512,"metadata":{"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q1"},"sandboxID":"igp6ksg7ri0xb8938kmel","startedAt":"2026-10-04T15:24:21.951759136Z","state":"running","templateID":"uh60ctbk06f4mrwuv6d6","volumeMounts":[]}
+RESULT get state=running endAt=2026-10-04T15:25:21Z
+[+  0.000s] >>> GET https://api.e2b.app/v2/sandboxes?metadata=roost.tenant%3Dacme%26roost.workspace%3Dws-q1&state=running,paused
+    X-Api-Key: <redacted len=44>
+[+  0.670s] <<< 200 OK (669ms) GET /v2/sandboxes
+    Content-Type: application/json; charset=utf-8
+    X-Total-Running: 1
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: [{"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","cpuCount":1,"diskSizeMB":11798,"endAt":"2026-10-04T15:25:21.951759136Z","envdVersion":"0.9.0","memoryMB":512,"metadata":{"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q1"},"sandboxID":"igp6ksg7ri0xb8938kmel","startedAt":"2026-10-04T15:24:21.951759136Z","state":"running","templateID":"uh60ctbk06f4mrwuv6d6","volumeMounts":[]}]
+  page 1: igp6ksg7ri0xb8938kmel state=running template=uh60ctbk06f4mrwuv6d6 startedAt=2026-10-04T15:24:21Z endAt=2026-10-04T15:25:21Z metadata={"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q1"}
+RESULT list count=1

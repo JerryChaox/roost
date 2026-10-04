@@ -1,0 +1,42 @@
+### pagination: limit=1, follow X-Next-Token
+[+  0.000s] >>> GET https://api.e2b.app/v2/sandboxes?metadata=roost.spike%3D1&limit=1
+    X-Api-Key: <redacted len=44>
+[+  0.699s] <<< 200 OK (699ms) GET /v2/sandboxes
+    Content-Type: application/json; charset=utf-8
+    X-Next-Token: MjAyNi0xMC0wNFQxNToyOTozMC43NjU4NjlaX19pZDBhNnQ5MTF1Mmt4bG81b283aXo=
+    X-Total-Running: 2
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: [{"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","cpuCount":1,"diskSizeMB":11798,"endAt":"2026-10-04T15:44:30.765869322Z","envdVersion":"0.9.0","memoryMB":512,"metadata":{"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q9"},"sandboxID":"id0a6t911u2kxlo5oo7iz","startedAt":"2026-10-04T15:29:30.765869322Z","state":"running","templateID":"uh60ctbk06f4mrwuv6d6","volumeMounts":[]}]
+  page 1: id0a6t911u2kxlo5oo7iz state=running template=uh60ctbk06f4mrwuv6d6 startedAt=2026-10-04T15:29:30Z endAt=2026-10-04T15:44:30Z metadata={"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q9"}
+[+  0.700s] >>> GET https://api.e2b.app/v2/sandboxes?metadata=roost.spike%3D1&nextToken=MjAyNi0xMC0wNFQxNToyOTozMC43NjU4NjlaX19pZDBhNnQ5MTF1Mmt4bG81b283aXo%3D&limit=1
+    X-Api-Key: <redacted len=44>
+[+  0.883s] <<< 200 OK (183ms) GET /v2/sandboxes
+    Content-Type: application/json; charset=utf-8
+    X-Total-Running: 2
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: [{"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","cpuCount":1,"diskSizeMB":11798,"endAt":"2026-10-04T15:52:04.983189354Z","envdVersion":"0.9.0","memoryMB":512,"metadata":{"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q1"},"sandboxID":"igp6ksg7ri0xb8938kmel","startedAt":"2026-10-04T15:27:49.414022349Z","state":"running","templateID":"uh60ctbk06f4mrwuv6d6","volumeMounts":[]}]
+  page 2: igp6ksg7ri0xb8938kmel state=running template=uh60ctbk06f4mrwuv6d6 startedAt=2026-10-04T15:27:49Z endAt=2026-10-04T15:52:04Z metadata={"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q1"}
+RESULT list count=2
+### filter by template alias
+[+  0.000s] >>> GET https://api.e2b.app/v2/sandboxes?template=roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217&metadata=roost.spike%3D1
+    X-Api-Key: <redacted len=44>
+[+  0.697s] <<< 200 OK (697ms) GET /v2/sandboxes
+    Content-Type: application/json; charset=utf-8
+    X-Total-Running: 2
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: [{"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","cpuCount":1,"diskSizeMB":11798,"endAt":"2026-10-04T15:44:30.765869322Z","envdVersion":"0.9.0","memoryMB":512,"metadata":{"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q9"},"sandboxID":"id0a6t911u2kxlo5oo7iz","startedAt":"2026-10-04T15:29:30.765869322Z","state":"running","templateID":"uh60ctbk06f4mrwuv6d6","volumeMounts":[]},{"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","cpuCount":1,"diskSizeMB":11798,"endAt":"2026-10-04T15:52:04.983189354Z","envdVersion":"0.9.0","memoryMB":512,"metadata":{"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q1"},"sandboxID":"igp6ksg7ri0xb8938kmel","startedAt":"2026-10-04T15:27:49.414022349Z","state":"running","templateID":"uh60ctbk06f4mrwuv6d6","volumeMounts":[]}]
+RESULT raw status=200
+### metadata filter with key needing encoding (value with = and &)
+[+  0.000s] >>> GET https://api.e2b.app/v2/sandboxes?metadata=roost.tenant%3Dacme%26roost.workspace%3Dws-q9
+    X-Api-Key: <redacted len=44>
+[+  0.668s] <<< 200 OK (668ms) GET /v2/sandboxes
+    Content-Type: application/json; charset=utf-8
+    X-Total-Running: 1
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: [{"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","cpuCount":1,"diskSizeMB":11798,"endAt":"2026-10-04T15:44:30.765869322Z","envdVersion":"0.9.0","memoryMB":512,"metadata":{"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q9"},"sandboxID":"id0a6t911u2kxlo5oo7iz","startedAt":"2026-10-04T15:29:30.765869322Z","state":"running","templateID":"uh60ctbk06f4mrwuv6d6","volumeMounts":[]}]
+  page 1: id0a6t911u2kxlo5oo7iz state=running template=uh60ctbk06f4mrwuv6d6 startedAt=2026-10-04T15:29:30Z endAt=2026-10-04T15:44:30Z metadata={"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q9"}
+RESULT list count=1

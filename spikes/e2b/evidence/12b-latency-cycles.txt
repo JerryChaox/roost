@@ -1,0 +1,38 @@
+RESULT create sandboxID=ixhcnl2yw5i0f4q320qva status=201 elapsed=1.161s
+RESULT poll-list id=ixhcnl2yw5i0f4q320qva state=running reached after 691ms (1 polls)
+--- cycle 1
+RESULT pause status=204 elapsed=808ms
+RESULT poll-list id=ixhcnl2yw5i0f4q320qva state=paused reached after 711ms (1 polls)
+RESULT connect status=201 elapsed=725ms
+RESULT exec exit=0 elapsed=679ms
+RESULT pause status=204 elapsed=791ms
+RESULT connect status=201 elapsed=5.769s
+RESULT exec exit=0 elapsed=730ms
+RESULT pause status=204 elapsed=1.223s
+RESULT connect status=201 elapsed=3.417s
+RESULT exec exit=0 elapsed=688ms
+RESULT list count=3
+--- cycle 2
+RESULT pause status=204 elapsed=1.578s
+RESULT poll-list id=ixhcnl2yw5i0f4q320qva state=paused reached after 673ms (1 polls)
+RESULT connect status=201 elapsed=835ms
+RESULT exec exit=0 elapsed=679ms
+RESULT pause status=204 elapsed=956ms
+RESULT connect status=201 elapsed=2.107s
+RESULT exec exit=0 elapsed=751ms
+RESULT pause status=204 elapsed=1.107s
+RESULT connect status=201 elapsed=2.143s
+RESULT exec exit=0 elapsed=818ms
+RESULT list count=3
+--- cycle 3
+RESULT pause status=204 elapsed=1.71s
+RESULT poll-list id=ixhcnl2yw5i0f4q320qva state=paused reached after 678ms (1 polls)
+RESULT connect status=201 elapsed=1.083s
+RESULT exec exit=0 elapsed=673ms
+RESULT pause status=204 elapsed=1.13s
+RESULT connect status=201 elapsed=2.078s
+RESULT exec exit=0 elapsed=698ms
+RESULT pause status=204 elapsed=1.358s
+RESULT connect status=201 elapsed=1.898s
+RESULT exec exit=0 elapsed=704ms
+RESULT list count=3

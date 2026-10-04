@@ -12,7 +12,7 @@ Every sandbox runs two roost processes:
 
 ```text
 control plane ──HTTP/SSE, driver token──▶ roost-driver ──proxy over a Unix socket──▶ agent host (conversation interface)
-backup service ──HTTP, driver token────▶ roost-driver ◀──JSON-RPC over stdio──────▶ agent host (control)
+backup service ──HTTP, backup token────▶ roost-driver ◀──JSON-RPC over stdio──────▶ agent host (control)
 ```
 
 The control plane and the backup service always call the driver; nothing in the sandbox calls roost, so roost needs no public address.
@@ -29,11 +29,11 @@ A workspace has at most one live **execution grant**: `{ workspace, sandbox, sta
 ## 2. Starting the driver
 
 1. The control plane stops every running driver and agent host in the sandbox through the provider's `Exec`, and confirms they are gone.
-2. It starts `roost-driver` with the grant's `start` and tokens, the model endpoints, the backup position and, in a sandbox created for a restore or a fork, the snapshot to restore (with the restore's id for a restore), in the driver's environment. The driver reads them and clears its environment.
+2. It starts `roost-driver` with the grant's `start` and tokens, the model endpoints, the backup position and, in a sandbox created for a restore or a fork, the snapshot to restore (with the restore's id for a restore), as one JSON object on the driver's standard input. The driver reads it and closes its input; none of it is passed in arguments or the environment.
 3. The driver takes an exclusive lock on `/var/lib/roost/agent/lock`; without it, it exits.
 4. With a snapshot to restore, the driver reports `awaiting_restore` and waits until `roost backup` has pushed it (section 6).
 5. The driver starts the agent host as a child process, which dies with it, and sends `initialize` over stdio (section 5).
-6. The agent host opens agent storage and resumes interrupted runs; the driver reports ready.
+6. The agent host takes its own exclusive lock on agent storage, opens it and resumes interrupted runs; the driver reports ready. A second agent host cannot take the lock and exits without opening storage.
 
 A driver without a grant answers `503 not_ready`. Nothing in the sandbox starts a driver on its own.
 
@@ -44,7 +44,7 @@ HTTP/1.1 through the provider's endpoint for the driver port. Every request carr
 | Method and path | Handled by | Purpose |
 |---|---|---|
 | `GET /v1/health` | Driver | Readiness, fingerprints of driver and agent host, the agent's name, durability and capabilities |
-| `GET /v1/state` | Driver, with the host's `state` | The grant's `start`, `awaiting_restore` or `ready`, `restored_from`, the backup position the backup service has confirmed, runs and queues |
+| `GET /v1/state` | Driver, with the host's `state` | The grant's `start`, `awaiting_restore` or `ready`, `restoredFrom`, the backup position the backup service has confirmed, runs and queues |
 | `POST /v1/drain` | Driver → host `quiesce` | `{ "phase": "draining" \| "open" }` → `{ "running": n }` |
 | `POST /v1/grant/rotate` | Driver | `{ "driverToken": "..." }`, authorized by the current token; the old token stops working at once |
 | `GET /v1/backup/stream` | Driver | Change records for the backup service (section 6) |
@@ -71,7 +71,7 @@ The agent host implements these over HTTP on the Unix socket. Their meaning belo
 | `POST /v1/conversations/{c}/notes` | `{ "id": "...", "data": { ... } }`: append a note entry without asking the model; idempotent by `id` |
 
 - Messages are admitted durably before `202`; the same `requestId` returns the original submission (Pi's `requestId`).
-- Entries have roost kinds, `user`, `assistant`, `tool_result`, `system`, `reset` and `note`, and carry the agent's own record unchanged in `raw`.
+- Entries have roost kinds, `user`, `assistant`, `tool_result`, `system`, `reset`, `compaction` and `note`, and carry the agent's own record unchanged in `raw`.
 - `live` events (partial answer, running tool output) carry no SSE `id` and are not replayed after a reconnect.
 - An agent that lacks an optional capability (`steer`, `reset_note`) answers `422 unsupported`.
 - **Read-only**: the agent host also runs outside any sandbox on a copy of agent storage, opened read-only, serving `GET /v1/conversations` and `GET /v1/conversations/{c}/entries` and refusing everything else. The backup service runs it this way for the read-only projection.

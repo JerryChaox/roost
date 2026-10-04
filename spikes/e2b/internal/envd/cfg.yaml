@@ -1,0 +1,5 @@
+package: envdhttp
+output: internal/envd/envdhttp/envdhttp.gen.go
+generate:
+  client: true
+  models: true

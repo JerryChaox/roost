@@ -15,7 +15,7 @@ This document is the normative contract between roost and the things around it: 
 | Workspace | `[a-z0-9-_.]{1,128}`, unique within a tenant; often one per end user | Application |
 | Conversation | The agent's own id, unique within a workspace. A caller MAY also give a `key`, unique within the workspace | Agent |
 | Message | Caller-supplied, unique per conversation; it is the agent's idempotency key | Caller |
-| Run | The agent's id for one run, from an input to its final answer | Agent |
+| Run | The id of the message that started the run, unique within its conversation. Work the agent does in conversations it starts itself belongs to that run | Caller |
 | Entry cursor | Opaque, ordered within a conversation | Agent |
 | Snapshot | `snap_<ulid>` | roost |
 | Restore | Caller-supplied, or `rs_<ulid>`; one restore, and its idempotency key | Caller or roost |
@@ -64,7 +64,7 @@ HTTP/JSON under `/v1/workspaces/{workspace}`, authenticated with a tenant API ke
 - `delivery` says how a message reaches the agent: `queue` (the default) starts a run if none is going and otherwise waits for the next one; `steer` joins the running run after its current tool round, or starts a run if none is going.
 - Conversation requests to a workspace that is not `active` get `409 workspace_busy`; reads are still served, from the projection.
 - Sending a message to a sleeping workspace wakes it. **Reading** a sleeping workspace does not: `entries` and `GET .../conversations` are served from the read-only projection that `roost backup` keeps (section 7) and carry `as_of`. Because a workspace sleeps only after its backup has caught up, that projection is complete.
-- Entry kinds are `user`, `assistant`, `tool_result`, `system`, `reset` and `note`; each entry also carries the agent's own record in `raw`.
+- Entry kinds are `user`, `assistant`, `tool_result`, `system`, `reset`, `compaction` and `note`; each entry also carries the agent's own record in `raw`.
 - Listing an owner's conversations across workspaces is `GET /v1/workspaces?owner=` followed by one call per workspace the application chooses to open; roost does not fan out on its behalf.
 
 `roost serve` maps each request onto the conversation interface; the two are designed separately, and the driver forwards the mapped request without parsing it.
@@ -189,7 +189,7 @@ The provider in v1alpha1 is E2B: E2B Cloud or E2B Embed, selected by API URL.
 
 | Group | Operations |
 |---|---|
-| Lifecycle | `Create(template, config, labels)`, `Connect(id)` (resumes if paused), `Pause(id)`, `Reboot(id)` (pause, then resume with `onResume: 'reboot'`), `Kill(id)` (invariant 9), timeouts that pause and never kill |
+| Lifecycle | `Create(template, config, labels)`, `Connect(id)` (resumes if paused), `Pause(id)`, `Reboot(id)` (pause without keeping memory, then resume: a cold boot from the sandbox's disk), `Kill(id)` (invariant 9), timeouts that pause and never kill; a request to a paused sandbox's endpoint resumes it |
 | Execution | `Exec(id, argv, env, user)` with streaming output |
 | Reachability | `Endpoint(id, port) → url, headers` |
 | Network | Update a running sandbox's egress rules |
@@ -247,7 +247,7 @@ The database holds only what roost decides: what each workspace is and where roo
 | `tenant`, `workspace`, `sandbox_id` | |
 | `driver_token`, `backup_token`, `model_key_ref` | The two tokens, and the LLM gateway's id for the model key (none on E2B Cloud) |
 | `issued_at`, `ended_at`, `end_reason` | `end_reason`: `driver_lost`, `stalled`, `rebooted`, `recover`, `upgrade` or `restore` |
-| `run` | The run a restart or reboot was for (section 8) |
+| `run` | The conversation and run a restart or reboot was for (section 8) |
 | `key_revoked_at` | When the gateway confirmed the model key's revocation |
 
 A partial unique index on `(tenant, workspace) WHERE ended_at IS NULL` allows one live grant per workspace. Issuing a grant ends the previous one in the same transaction.
@@ -290,6 +290,9 @@ workspace:
 agent:
   model: anthropic/claude-opus-5-5
   thinking: high
+  system_prompt:
+    base: pi                     # pi: Pi's own system prompt; none: start empty
+    append: file://./prompts/company.md   # optional, added after the base
 run:
   watchdog: { stall: 5m, ceiling: 3h }
   retries: { restart_driver: 2, reboot_sandbox: 1 }

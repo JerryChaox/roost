@@ -1,0 +1,48 @@
+[+  0.706s] <<< 200 OK (706ms) POST /process.Process/Start
+  [ 0.706s] start pid=1583
+  [ 0.706s] stdout| written
+  [ 0.706s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=706ms
+[+  0.000s] >>> POST https://api.e2b.app/sandboxes/igp6ksg7ri0xb8938kmel/pause
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {}
+[+  0.795s] <<< 204 No Content (795ms) POST /sandboxes/igp6ksg7ri0xb8938kmel/pause
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+RESULT pause status=204 elapsed=795ms
+[+  0.000s] >>> POST https://api.e2b.app/v2/sandboxes/igp6ksg7ri0xb8938kmel/connect
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"memory":false,"timeout":900}
+[+ 10.816s] <<< 201 Created (10.815s) POST /v2/sandboxes/igp6ksg7ri0xb8938kmel/connect
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","envdAccessToken":"<redacted len=64>","envdVersion":"0.9.0","sandboxID":"igp6ksg7ri0xb8938kmel","templateID":"uh60ctbk06f4mrwuv6d6"}
+RESULT connect status=201 elapsed=10.816s
+[+  0.652s] <<< 200 OK (651ms) POST /process.Process/List
+RESULT ps count=0
+[+  0.770s] <<< 200 OK (770ms) POST /process.Process/Start
+  [ 0.770s] start pid=369
+  [ 0.780s] stdout| bootId=0f809e07-7ce8-4cdd-8a6b-32b050ab63a3 uptime=10.80
+  [ 0.926s] stdout|     305 root     /usr/bin/envd
+  [ 0.930s] stdout| total 1
+  [ 0.930s] stdout| drwxr-xr-x 2 root root 60 Oct  4 15:26 .
+  [ 0.930s] stdout| drwxr-xr-x 3 root root 60 Oct  4 15:23 ..
+  [ 0.930s] stdout| -rw-r--r-- 1 root root  7 Oct  4 15:26 synced.txt
+  [ 0.930s] stdout| -rw-r--r-- 1 root root 20 Oct  4 15:26 unsynced.txt
+  [ 0.933s] stdout| synced
+  [ 0.933s] stdout| unsynced-1791127586
+  [ 1.579s] stdout| 
+  [ 1.585s] stdout| degraded
+  [ 1.587s] stdout| 151
+  [ 1.587s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=1.587s
+[+  0.000s] >>> GET https://8080-igp6ksg7ri0xb8938kmel.e2b.app/health
+[+  1.994s] <<< 502 Bad Gateway (1.994s) GET /health
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"sandboxId":"igp6ksg7ri0xb8938kmel","message":"The sandbox is running but port is not open","port":8080,"code":502}
+RESULT http status=502 elapsed=1.994s

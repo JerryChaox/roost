@@ -1,0 +1,10 @@
+[+  0.789s] <<< 200 OK (788ms) POST /process.Process/Start
+  [ 0.788s] start pid=1695
+  [ 0.865s] stdout| httpbin.org issuer:    i:O = E2B, CN = E2B Proxy CA
+  [ 0.990s] stdout| postman-echo.com issuer:    i:C = US, O = Let's Encrypt, CN = YE2
+  [ 0.990s] stdout| node default CA -> postman-echo (no rule):
+  [ 1.317s] stdout| status 200
+  [ 1.327s] stdout| NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt -> httpbin:
+  [ 1.699s] stdout| status 200
+  [ 1.703s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=1.703s

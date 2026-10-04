@@ -1,0 +1,10 @@
+[+  0.000s] >>> POST https://api.e2b.app/v2/sandboxes
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"templateID":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","timeout":60,"autoPause":true,"autoPauseMemory":false,"autoResume":{"enabled":true},"metadata":{"roost.spike":"1","roost.workspace":"ws-x"}}
+[+  0.659s] <<< 400 Bad Request (659ms) POST /v2/sandboxes
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"code":400,"message":"autoPauseMemory=false (filesystem-only auto-pause) cannot be combined with autoResume: a filesystem-only snapshot cannot be auto-resumed by traffic and must be resumed explicitly."}
+RESULT create status=400 elapsed=659ms

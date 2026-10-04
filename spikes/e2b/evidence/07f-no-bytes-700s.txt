@@ -1,0 +1,3 @@
+[+  0.000s] >>> GET https://8080-igp6ksg7ri0xb8938kmel.e2b.app/sleep?s=700
+[+600.448s] <<< transport error after 10m0.448s: unexpected EOF
+RESULT http error after 10m0.448s: Get "https://8080-igp6ksg7ri0xb8938kmel.e2b.app/sleep?s=700": unexpected EOF

@@ -1,0 +1,39 @@
+[+  0.000s] >>> POST https://49983-igp6ksg7ri0xb8938kmel.e2b.app/process.Process/Start
+    Accept-Encoding: identity
+    Authorization: Basic cm9vdDo=   (= base64("root:"))
+    Connect-Accept-Encoding: gzip
+    Connect-Protocol-Version: 1
+    Content-Type: application/connect+json
+    Keepalive-Ping-Interval: 50
+    X-Access-Token: <redacted len=64>
+    body (connect envelope, flags=0): {"process":{"cmd":"/bin/bash","args":["-c","id; echo \"FOO=$FOO ROOST_EXAMPLE=$ROOST_EXAMPLE HOME=$HOME PWD=$PWD\"; for i in 1 2 3; do echo tick $i; sleep 1; done; echo to-stderr >&2; exit 3"],"envs":{"FOO":"bar"}}}
+[+  1.155s] <<< 200 OK (1.155s) POST /process.Process/Start
+    Content-Type: application/connect+json
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    Connect-Content-Encoding: gzip
+  [ 1.155s] start pid=1511
+  [ 1.155s] stdout| uid=0(root) gid=0(root) groups=0(root)
+  [ 1.155s] stdout| FOO=bar ROOST_EXAMPLE=from-create HOME=/root PWD=/root
+  [ 1.155s] stdout| tick 1
+  [ 2.659s] stdout| tick 2
+  [ 3.530s] stdout| tick 3
+  [ 4.534s] stderr| to-stderr
+  [ 4.534s] end exit=3 exited=true status="exit status 3" err="exit status 3"
+RESULT exec exit=3 elapsed=4.534s
+[+  0.828s] <<< 200 OK (828ms) POST /process.Process/Start
+  [ 0.828s] start pid=1516
+  [ 0.832s] stdout| uid=1001(user) gid=1001(user) groups=1001(user),27(sudo)
+  [ 0.832s] stdout| FOO=baz ROOST_EXAMPLE=from-create HOME=/home/user PWD=/home/user
+  [ 1.074s] stdout| {"ok":true,"port":9000,"pid":351,"uid":1001,"user":"user","bootId":"6195d59f-a85f-4a7e-b556-91f7bf8c66dc","startedAt":1791127434946,"ticks":15,"uptimeSec":23.71,"grantSeen":null,"envStillHasGrant":false,"headers":{"host":"127.0.0.1:9000","user-agent":"curl/7.88.1","accept":"*/*"}}
+  [ 1.074s] stdout| 
+  [ 1.423s] stdout|     312 root     /usr/bin/envd
+  [ 1.423s] stdout|     351 user     node /opt/roost/fake-driver.js
+  [ 1.423s] stdout|    1522 user     grep -E node|envd
+  [ 1.426s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=1.426s
+[+  0.699s] <<< 200 OK (699ms) POST /process.Process/Start
+  [ 0.699s] start pid=1523
+  [ 0.704s] stdout| default-user: user
+  [ 0.707s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=707ms

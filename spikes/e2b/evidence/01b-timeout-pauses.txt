@@ -1,0 +1,66 @@
+15:24:49
+[+  0.694s] <<< 200 OK (694ms) GET /v2/sandboxes
+[+  2.111s] <<< 200 OK (416ms) GET /v2/sandboxes
+[+  3.301s] <<< 200 OK (189ms) GET /v2/sandboxes
+[+  4.488s] <<< 200 OK (187ms) GET /v2/sandboxes
+[+  5.736s] <<< 200 OK (246ms) GET /v2/sandboxes
+[+  6.949s] <<< 200 OK (212ms) GET /v2/sandboxes
+[+  8.138s] <<< 200 OK (188ms) GET /v2/sandboxes
+[+  9.319s] <<< 200 OK (180ms) GET /v2/sandboxes
+[+ 10.507s] <<< 200 OK (187ms) GET /v2/sandboxes
+[+ 11.687s] <<< 200 OK (179ms) GET /v2/sandboxes
+[+ 12.873s] <<< 200 OK (185ms) GET /v2/sandboxes
+[+ 14.110s] <<< 200 OK (236ms) GET /v2/sandboxes
+[+ 15.338s] <<< 200 OK (226ms) GET /v2/sandboxes
+[+ 16.522s] <<< 200 OK (183ms) GET /v2/sandboxes
+[+ 17.708s] <<< 200 OK (185ms) GET /v2/sandboxes
+[+ 18.892s] <<< 200 OK (183ms) GET /v2/sandboxes
+[+ 20.076s] <<< 200 OK (183ms) GET /v2/sandboxes
+[+ 21.260s] <<< 200 OK (183ms) GET /v2/sandboxes
+[+ 22.496s] <<< 200 OK (236ms) GET /v2/sandboxes
+[+ 23.724s] <<< 200 OK (227ms) GET /v2/sandboxes
+[+ 24.908s] <<< 200 OK (183ms) GET /v2/sandboxes
+[+ 26.093s] <<< 200 OK (183ms) GET /v2/sandboxes
+[+ 27.278s] <<< 200 OK (184ms) GET /v2/sandboxes
+[+ 28.466s] <<< 200 OK (187ms) GET /v2/sandboxes
+[+ 29.651s] <<< 200 OK (184ms) GET /v2/sandboxes
+[+ 30.885s] <<< 200 OK (233ms) GET /v2/sandboxes
+[+ 32.115s] <<< 200 OK (229ms) GET /v2/sandboxes
+RESULT poll-list id=igp6ksg7ri0xb8938kmel state=paused reached after 32.115s (27 polls)
+15:25:21
+[+  0.000s] >>> GET https://api.e2b.app/sandboxes/igp6ksg7ri0xb8938kmel
+    X-Api-Key: <redacted len=44>
+[+  0.878s] <<< 200 OK (878ms) GET /sandboxes/igp6ksg7ri0xb8938kmel
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","cpuCount":1,"diskSizeMB":11798,"endAt":"2026-10-04T15:25:21.959892Z","envdAccessToken":"<redacted len=64>","envdVersion":"0.9.0","lifecycle":{"autoResume":false,"onTimeout":"pause"},"memoryMB":512,"metadata":{"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q1"},"sandboxID":"igp6ksg7ri0xb8938kmel","startedAt":"2026-10-04T15:24:21.951759Z","state":"paused","templateID":"uh60ctbk06f4mrwuv6d6"}
+RESULT get state=paused endAt=2026-10-04T15:25:21Z
+[+  0.000s] >>> GET https://api.e2b.app/v2/sandboxes?metadata=roost.spike%3D1
+    X-Api-Key: <redacted len=44>
+[+  0.660s] <<< 200 OK (660ms) GET /v2/sandboxes
+    Content-Type: application/json; charset=utf-8
+    X-Total-Running: 0
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: [{"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","cpuCount":1,"diskSizeMB":11798,"endAt":"2026-10-04T15:25:21.959892Z","envdVersion":"0.9.0","memoryMB":512,"metadata":{"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q1"},"sandboxID":"igp6ksg7ri0xb8938kmel","startedAt":"2026-10-04T15:24:21.951759Z","state":"paused","templateID":"uh60ctbk06f4mrwuv6d6","volumeMounts":[]}]
+  page 1: igp6ksg7ri0xb8938kmel state=paused template=uh60ctbk06f4mrwuv6d6 startedAt=2026-10-04T15:24:21Z endAt=2026-10-04T15:25:21Z metadata={"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q1"}
+RESULT list count=1
+[+  0.000s] >>> GET https://api.e2b.app/v2/sandboxes?metadata=roost.spike%3D1&state=paused
+    X-Api-Key: <redacted len=44>
+[+  0.843s] <<< 200 OK (843ms) GET /v2/sandboxes
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: [{"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","cpuCount":1,"diskSizeMB":11798,"endAt":"2026-10-04T15:25:21.959892Z","envdVersion":"0.9.0","memoryMB":512,"metadata":{"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q1"},"sandboxID":"igp6ksg7ri0xb8938kmel","startedAt":"2026-10-04T15:24:21.951759Z","state":"paused","templateID":"uh60ctbk06f4mrwuv6d6","volumeMounts":[]}]
+  page 1: igp6ksg7ri0xb8938kmel state=paused template=uh60ctbk06f4mrwuv6d6 startedAt=2026-10-04T15:24:21Z endAt=2026-10-04T15:25:21Z metadata={"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q1"}
+RESULT list count=1
+[+  0.000s] >>> GET https://api.e2b.app/v2/sandboxes?metadata=roost.spike%3D1&state=running
+    X-Api-Key: <redacted len=44>
+[+  0.684s] <<< 200 OK (684ms) GET /v2/sandboxes
+    Content-Type: application/json; charset=utf-8
+    X-Total-Running: 0
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: []
+RESULT list count=0

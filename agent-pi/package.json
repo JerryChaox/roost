@@ -1,0 +1,25 @@
+{
+  "name": "roost-agent-pi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "roost agent host embedding Pi Durable",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/main.js",
+  "bin": { "roost-agent-pi": "dist/main.js" },
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "test": "npm run build && node --test --test-concurrency=1 test/*.test.ts"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.0.2",
+    "@earendil-works/pi-ai": "1.0.2",
+    "@earendil-works/pi-durable": "1.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.0",
+    "typescript": "5.9.3"
+  }
+}

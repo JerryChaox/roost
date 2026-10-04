@@ -1,0 +1,22 @@
+[+  0.880s] <<< 200 OK (880ms) POST /process.Process/Start
+  [ 0.880s] start pid=1511
+  [ 0.880s] stdout| == https httpbin.org (rule) curl, sandbox sends placeholder:
+  [ 1.578s] stdout| {"headers":{"Accept":"*/*","Accept-Encoding":"gzip","Authorization":"Bearerdummy-injected-BBBB","Host":"httpbin.org","User-Agent":"curl/7.88.1","X-Amzn-Trace-Id":"Root=1-6ac270b7-29775d584ce9df8b34b7a919","X-Api-Key":"dummy-injected-key-AAAA"}}
+  [ 1.578s] stdout| 
+  [ 1.578s] stdout| == http httpbin.org (plain HTTP, rule should not apply):
+  [ 1.680s] stdout| {"headers":{"Accept":"*/*","Host":"httpbin.org","User-Agent":"curl/7.88.1","X-Amzn-Trace-Id":"Root=1-6ac270b7-70b2497a72419f984c629c4b","X-Api-Key":"placeholder-from-sandbox"}}
+  [ 1.680s] stdout| == https postman-echo.com (allowed, no rule):
+  [ 1.856s] stdout| {"headers":{"host":"postman-echo.com","user-agent":"curl/7.88.1","x-api-key":"placeholder-from-sandbox","accept":"*/*","x-forwarded-proto":"https","accept-encoding":"gzip,br"}}
+  [ 1.856s] stdout| 
+  [ 1.856s] stdout| == https example.com (not allowed):
+  [ 1.908s] stdout| http=000 err=OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to example.com:443 
+  [ 1.908s] stdout| == node fetch https httpbin.org (default Node CA store):
+  [ 2.889s] stdout| ERR UNABLE_TO_VERIFY_LEAF_SIGNATURE
+  [ 2.981s] stdout| == node --use-system-ca:
+  [ 3.414s] stdout| {"headers":{"Accept":"*/*","Accept-Encoding":"br,gzip,deflate","Accept-Language":"*","Authorization":"Bearerdummy-injected-BBBB","Host":"httpbin.org","Sec-Fetch-Mode":"cors","User-Agent":"node","X-Amzn-Trace-Id":"Root=1-6ac270b9-33c5e5490feb6ec847986ab4","X-Api-Key":"dummy-injected-key-AAAA"}}
+  [ 3.420s] stdout| == issuer seen by sandbox for httpbin.org:
+  [ 3.462s] stdout|    i:O = E2B, CN = E2B Proxy CA
+  [ 3.465s] stdout| == does the injected value appear anywhere inside (as root)?
+  [ 6.253s] stdout| (end of search)
+  [ 6.253s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=6.253s
