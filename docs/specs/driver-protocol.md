@@ -1,237 +1,123 @@
-# Driver protocol (v1alpha1)
+# Sandbox protocols (v1alpha1)
 
 | | |
 |---|---|
 | Status | Draft; changes freely until M0 closes |
 | Parent | [Contracts](contracts.md) · [RFC 0001](../rfcs/0001-durable-agent-runtime.md) |
 
-The driver protocol is how the control plane (`roost`) talks to `roost-driver`, the process inside every sandbox. The control plane always calls the driver; the driver never calls the control plane. This is why `roost` needs no public address.
+Every sandbox runs two roost processes:
 
-## 1. Roles
+- **`roost-driver`**, the core, written in Go. It gates every request from outside, supervises the agent host, holds the lock on agent storage, carries the workspace's execution grant, and captures backup data. It does not understand conversations.
+- **The agent host**, which runs the agent loop and serves the conversation interface. In v1alpha1 it is `roost-agent-pi`, a TypeScript program that embeds [Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable).
 
-- **Control plane** owns conversations, turns, grants and bindings. It decides what runs where.
-- **Driver** owns what happens inside one sandbox: it hosts the agent SDKs, keeps each conversation's session warm between turns, streams output, checkpoints each step into the shadow repository, and snapshots the workspace.
-- **Session**: a conversation's live agent session in the driver. One session serves many turns; it is closed when idle and resumed from its files later.
-- **Attempt**: one execution of one turn. When the session dies or is interrupted mid-turn, the turn continues as the next attempt.
-
-## 2. Transport
-
-- HTTP/1.1, JSON bodies, UTF-8.
-- Reached through the backend's endpoint for the driver port (E2B: the sandbox URL for that port with its traffic token; Docker: a published port).
-- Every request carries `Authorization: Bearer <driver token>` and `Roost-Protocol: 1`. Every response carries `Roost-Protocol: 1`.
-- The driver token is created by the control plane when the sandbox is created and handed to the driver in its environment at start. It is never written to disk. The driver runs as a different OS user from the agent, so the agent cannot read it.
-- A request with a missing or unknown `Roost-Protocol` gets `400 unsupported_protocol`. Unknown fields in bodies are ignored; missing optional fields mean "not supported by this peer", never a default.
-
-## 3. Grants
-
-A grant says which executor may act for a conversation.
-
-```json
-{ "generation": 7, "epoch": 12, "lease_ms": 30000 }
+```text
+control plane ──HTTP/SSE, driver token──▶ roost-driver ──proxy over a Unix socket──▶ agent host (conversation interface)
+backup service ──HTTP, driver token────▶ roost-driver ◀──JSON-RPC over stdio──────▶ agent host (control)
 ```
 
-The conversation is the prefix of the turn id, so the grant does not repeat it.
+The control plane and the backup service always call the driver; nothing in the sandbox calls roost, so roost needs no public address.
 
-- `epoch` is the conversation's fencing token: an integer that the control plane increases by compare-and-set in its database on every takeover. The database is the authority; the driver only enforces the order.
-- `generation` is the workspace's binding generation. It increases every time the workspace is bound to a new sandbox, so one sandbox only ever sees one generation. The driver echoes it; the control plane uses it (see below).
-- The control plane renews the lease implicitly: every event pull carries the grant (see `GET /v1/turns/{turn}/events`). If the driver sees no valid pull for a conversation within `lease_ms`, the lease has lapsed.
+## 1. Execution grant
 
-Why an ordered number and not a random token: at a takeover the incoming grant always differs from the one the driver holds, and the driver must tell a newer grant (a legitimate takeover) from an older one (a request from a stale control-plane instance that arrives late). Equality cannot tell them apart; order can.
+A workspace has at most one live **execution grant**: `{ workspace, sandbox, start, driver token, backup token, model key }`, identified by its `start`. The control plane issues it as a row of its database, ending the previous grant in the same transaction, and routes every request for the workspace to the driver that holds it.
 
-Driver rules:
+- The control plane issues a new grant whenever it starts a driver: when the sandbox is created, rebooted, restored or forked, when an upgrade replaces the driver, and when the driver stops answering while the sandbox is reachable.
+- A new control-plane process rotates the driver token of each grant it takes over (section 3, `rotate`), so requests from an earlier process lose effect without restarting anything.
+- The driver accepts only the current grant's tokens: the driver token, used by the control plane, on every route; the backup token, used by the backup service, only on `/v1/backup/*`, `/v1/restore` and `/v1/state`. Everything else gets `401 unauthorized`. The model key is minted for the grant at the LLM gateway and revoked when the grant ends, so an older key reaches no model.
+- The tokens exist only in roost's database, in the memory of the process that uses them and in the driver's memory; the model key only at the LLM gateway and in the agent host's memory. None of them is written to the sandbox's disk.
 
-1. The driver keeps, per conversation, the highest `epoch` it has accepted, in its own directory (`/var/lib/roost/grants`). That directory is outside the workspace, never checkpointed or snapshotted, and not writable by the agent's user. The driver reloads it when it starts.
-2. A request whose `epoch` is lower than the recorded one is rejected with `409 superseded`, whatever the request is, including a turn submission.
-3. A request whose `epoch` is higher than the recorded one records the new epoch. Any attempt still running under a lower epoch is stopped at once, and its tool calls are denied from that moment.
-4. While a conversation's lease has lapsed, the tool-admission hook denies every tool call for that conversation. The agent can still think; it cannot act.
-5. Every event carries the grant it was produced under.
+## 2. Starting the driver
 
-Control-plane rules:
+1. The control plane stops every running driver and agent host in the sandbox through the provider's `Exec`, and confirms they are gone.
+2. It starts `roost-driver` with the grant's `start` and tokens, the model endpoints, the backup position and, in a sandbox created for a restore or a fork, the snapshot to restore (with the restore's id for a restore), in the driver's environment. The driver reads them and clears its environment.
+3. The driver takes an exclusive lock on `/var/lib/roost/agent/lock`; without it, it exits.
+4. With a snapshot to restore, the driver reports `awaiting_restore` and waits until `roost backup` has pushed it (section 6).
+5. The driver starts the agent host as a child process, which dies with it, and sends `initialize` over stdio (section 5).
+6. The agent host opens agent storage and resumes interrupted runs; the driver reports ready.
 
-1. Events are stored only if the workspace is still bound at the event's `generation` and the conversation's `epoch` is still current; a pull that started before a rebind or takeover and returned after it is dropped whole.
-2. A workspace is restored only from a snapshot id reported by `snapshot.completed` under the current generation, never from "the latest snapshot in the repository".
+A driver without a grant answers `503 not_ready`. Nothing in the sandbox starts a driver on its own.
 
-A replaced sandbox is stopped by three things together: nobody pulls from it, so its leases lapse and its tools are denied; its snapshot credentials are per turn and expire; and anything it still uploads is never chosen for a restore.
+## 3. Driver protocol (control plane and backup service → driver)
 
-### Driver restarts
+HTTP/1.1 through the provider's endpoint for the driver port. Every request carries `Authorization: Bearer <driver token or backup token>` and `Roost-Protocol: 1`. Path parameters are URL-encoded.
 
-The driver generates a random `boot_id` every time it starts and keeps it only in memory. It appears in the health response and in every event-pull response. A new `boot_id` tells the control plane that everything the driver held in memory is gone: events not yet pulled, the record of which attempts were submitted, and the leases.
+| Method and path | Handled by | Purpose |
+|---|---|---|
+| `GET /v1/health` | Driver | Readiness, fingerprints of driver and agent host, the agent's name, durability and capabilities |
+| `GET /v1/state` | Driver, with the host's `state` | The grant's `start`, `awaiting_restore` or `ready`, `restored_from`, the backup position the backup service has confirmed, runs and queues |
+| `POST /v1/drain` | Driver → host `quiesce` | `{ "phase": "draining" \| "open" }` → `{ "running": n }` |
+| `POST /v1/grant/rotate` | Driver | `{ "driverToken": "..." }`, authorized by the current token; the old token stops working at once |
+| `GET /v1/backup/stream` | Driver | Change records for the backup service (section 6) |
+| `GET /v1/backup/content` | Driver | Bytes of a changed file or WAL segment |
+| `POST /v1/snapshot` | Driver | `{ "note": "...", "quiesce": true }` → `{ "snapshot": "snap_..." }`: record a snapshot now |
+| `PUT /v1/restore` | Driver | The snapshot to restore, from the backup service; accepted only while `awaiting_restore` (section 6) |
+| `/v1/conversations/...` | Agent host | The conversation interface (section 4), forwarded untouched, streams included |
 
-- On start, before serving requests, the driver kills every agent process it did not start itself, reloads the recorded epochs, and holds no leases, so every tool call is denied until the control plane submits again.
-- A turn submission carries `expected_boot`. If it differs from the driver's `boot_id`, the driver answers `409 boot_changed` and starts nothing. Without this, a retry of a submission whose response was lost could start the same attempt twice after a restart.
-- When the control plane sees a new `boot_id`, it discards its event cursors for that sandbox (sequence numbers restart), treats the running attempts as lost, and submits the next attempt with `resume_from` set to the last step it stored. The workspace and the sessions are still on disk, so the turn continues from that step without a snapshot restore.
+The driver checks the token and the protocol header, then forwards conversation requests to the agent host over `/run/roost/agent.sock`. It parses none of them.
 
-## 4. Endpoints
+## 4. Conversation interface (served by the agent host)
+
+The agent host implements these over HTTP on the Unix socket. Their meaning belongs to the agent. `roost serve` maps its public API onto them ([contracts §3](contracts.md#3-conversation-api)); the driver forwards them without parsing.
 
 | Method and path | Purpose |
 |---|---|
-| `GET /v1/health` | Readiness and identity |
-| `POST /v1/turns` | Start a turn attempt (idempotent) |
-| `GET /v1/turns/{turn}/events` | Pull events (long poll) |
-| `POST /v1/sessions/{conversation}/warm` | Start or resume a session before its turn |
-| `POST /v1/turns/{turn}/interrupt` | Stop the running attempt |
-| `GET /v1/state` | Everything the driver knows, for `inspect` |
-| `POST /v1/restore` | Restore the workspace from a snapshot before the first turn |
-| `POST /v1/snapshots` | Take a snapshot now |
-| `POST /v1/drain` | Prepare the sandbox to be replaced |
+| `POST /v1/conversations` | Create a conversation, or return the one with the same `key`: `{ "key": "slack:C123:1712.0000", "settings": { "model": "...", "instructions": "..." } }` → `{ "conversation": "c_..." }` |
+| `GET /v1/conversations` | List conversations: `?key=`, `?active=true`, cursor |
+| `POST /v1/conversations/{c}/messages` | `{ "requestId": "m-1", "content": "...", "whenBusy": "follow_up" \| "steer" }` → `202 { "status": "queued" \| "running" }`, or `200 duplicate` |
+| `GET /v1/conversations/{c}/entries` | Transcript entries after a cursor, in order; any cursor can be read again |
+| `GET /v1/conversations/{c}/stream` | SSE: entries after `after`, then live output and run status |
+| `POST /v1/conversations/{c}/abort` | Stop the running run and withdraw queued messages |
+| `POST /v1/conversations/{c}/reset` | Start a new model context, optionally from a handoff `note` |
+| `POST /v1/conversations/{c}/notes` | `{ "id": "...", "data": { ... } }`: append a note entry without asking the model; idempotent by `id` |
 
-### `GET /v1/health`
+- Messages are admitted durably before `202`; the same `requestId` returns the original submission (Pi's `requestId`).
+- Entries have roost kinds, `user`, `assistant`, `tool_result`, `system`, `reset` and `note`, and carry the agent's own record unchanged in `raw`.
+- `live` events (partial answer, running tool output) carry no SSE `id` and are not replayed after a reconnect.
+- An agent that lacks an optional capability (`steer`, `reset_note`) answers `422 unsupported`.
+- **Read-only**: the agent host also runs outside any sandbox on a copy of agent storage, opened read-only, serving `GET /v1/conversations` and `GET /v1/conversations/{c}/entries` and refusing everything else. The backup service runs it this way for the read-only projection.
 
-```json
-{ "ready": true, "fingerprint": "sha256:9c1e...", "boot_id": "b_7Qx..." }
-```
+## 5. Host control channel (driver ↔ agent host)
 
-`fingerprint` is the hash of the driver binary plus the protocol version. The control plane compares it with the fingerprint it expects to decide whether the sandbox is out of date.
+JSON-RPC 2.0 over the agent host's stdin and stdout, one message per line. Only the driver holds this channel.
 
-### `POST /v1/turns`
+| Direction | Method | Purpose |
+|---|---|---|
+| driver → host | `initialize` | `{ "protocol": 1, "storage": "/var/lib/roost/agent", "socket": "/run/roost/agent.sock", "models": { "baseUrls": {...}, "credential": "..." }, "agent": { "model": "...", "thinking": "high" }, "restoredFrom": { "snapshot": "snap_...", "restore": "rs-1" } }` → `{ "agent": "pi-durable", "version": "...", "durability": "step", "capabilities": ["steer", "reset_note"] }`. `restoredFrom` is set in a sandbox filled from a snapshot; `restore` only for a restore, and then the host appends a `restored` note to every conversation, idempotent by the restore's id |
+| driver → host | `quiesce` / `resume` | Stop starting runs and report how many still run / start them again |
+| driver → host | `state` / `shutdown` | Runs, queues and last progress / stop after flushing |
+| host → driver | `snapshot` (notification) | A step finished: `{ "conversation": "c_...", "run": "run_...", "position": "<agent storage position>" }`; the driver takes a snapshot |
 
-```json
-{
-  "turn": "slack:C123:1712.0000/01JA0...",
-  "attempt": 1,
-  "expected_boot": "b_7Qx...",
-  "grant": { "generation": 7, "epoch": 12, "lease_ms": 30000 },
-  "session": "5f0c...",
-  "resume_from": null,
-  "messages": [ { "id": "m-1", "text": "hi" } ],
-  "credentials": { "AWS_ACCESS_KEY_ID": "...", "AWS_SECRET_ACCESS_KEY": "...", "AWS_SESSION_TOKEN": "..." }
-}
-```
+Model credentials reach the host here, not through its environment. The host calls models directly: the LLM gateway with the grant's model key on E2B Embed, or the providers with a placeholder key on E2B Cloud, where E2B's egress proxy injects the real one.
 
-- `session` is the SDK session to resume; `null` starts a new one. `resume_from` is the last completed step when resuming after a process death.
-- The driver hands the messages to the conversation's live session. If none is alive it starts one, resuming `session` when given.
-- `credentials` are environment variables for this attempt only, kept on tmpfs and removed when it ends. They never enter the workspace, the shadow repository or a snapshot.
+## 6. Backup capture and restore
 
-Idempotency, keyed by `(turn, attempt)`:
+The driver captures, the backup service does the heavy work in kopia ([contracts §7](contracts.md#7-backup)).
 
-| Situation | Response |
-|---|---|
-| New `(turn, attempt)` and no attempt is active for the conversation | `202 accepted` |
-| Same `(turn, attempt)` again | `200 duplicate` with its status (`running` or `finished`); nothing starts |
-| Higher `attempt` for a turn whose previous attempt is still alive | `409 attempt_running`; the control plane must interrupt first |
-| Lower `attempt` than one already seen | `409 stale_attempt` |
-| Another turn is running in the same conversation | `409 conversation_busy` |
-| The sandbox is draining | `423 draining` |
-| Too many concurrent attempts in the sandbox | `429 capacity` |
-| `expected_boot` is not the driver's current `boot_id` | `409 boot_changed` |
-| `epoch` lower than the recorded one | `409 superseded` |
+- **Agent storage**: Pi's SQLite database runs in WAL mode. The driver follows the WAL continuously, in the manner of Litestream, and cuts it into ordered segments. Every commit is captured within seconds. From time to time it also offers a new base copy of the database, so the segments after a base stay few.
+- **Workspace files**: the driver places one fanotify mark on the filesystem (`FAN_MARK_FILESYSTEM` with `FAN_REPORT_DFID_NAME`, including `FAN_CLOSE_WRITE`) and records which paths under the persistent paths changed. Events only say where to look: a scan of file metadata (size, modification time, inode), after every queue overflow and on a timer, decides what actually changed.
+- **Snapshots**: on every `snapshot` from the host, at the end of every run and on a timer, the driver records `{ file tree changes since the last snapshot, agent storage position, time }`.
+- **Cost**: capture runs in a low-priority cgroup (`nice`, `ionice`, a small CPU weight). Chunking, hashing, compression, encryption and upload happen outside the sandbox.
 
-A control plane that lost a response simply submits again: the duplicate answer tells it the attempt is already running or finished.
+`GET /v1/backup/stream?after=<position>` returns, in order, `base` and `wal` records (agent storage), `files` records (changed, created and deleted paths with metadata) and `snapshot` records. `GET /v1/backup/content` returns the bytes the backup service asks for. The backup service advances its position only after it has stored what it read, and the driver reports the position it last confirmed.
 
-### `GET /v1/turns/{turn}/events?after=<seq>&wait_ms=<n>`
+**Restore.** A driver started with a snapshot to restore waits in `awaiting_restore`. The backup service sends `PUT /v1/restore` with a tar stream: the persistent paths with their owners and modes, then the agent storage assembled at the snapshot's position. The driver writes it, syncs it to disk, writes `/var/lib/roost/restored-from` last, and only then starts the agent host. A restore is accepted once; a second `PUT` gets `409`, and a driver that restarts finds the marker and does not wait again. Nothing in the sandbox reads the repository.
 
-The request carries the grant in a header: `Roost-Grant: <generation>.<epoch>`. That header also renews the lease.
-
-```json
-{ "events": [ { "seq": 42, "...": "..." } ], "quiet_ms": 1200, "boot_id": "b_7Qx..." }
-```
-
-- Returns events with `seq > after`; waits up to `wait_ms` (maximum 30000) when there are none. The next cursor is the last event's `seq`.
-- `quiet_ms` is how long the attempt has shown no activity at all, measured by the driver, so the two clocks never need to agree.
-- Re-reading with the same `after` returns the same events. The control plane persists events to its database and advances its cursor only after they are stored.
-
-### `POST /v1/sessions/{conversation}/warm`
-
-Starts or resumes the conversation's session ahead of a turn, so start-up overlaps the batch window. Carries the grant; answers `200` when the session is ready. Warming never runs a turn.
-
-### `POST /v1/turns/{turn}/interrupt`
-
-`{ "attempt": 1 }` → `200` once the attempt has stopped, including when it had already finished. Claude sessions are interrupted through the SDK and stay alive; a Codex session is closed.
-
-### `POST /v1/restore`
-
-`{ "snapshot": "k7f3...", "store": { "url": "s3://bucket/tenants/acme/workspaces/alice", "credentials": [ ... ] } }` → `200` when the workspace and the shadow repository match the snapshot. Only allowed before the first turn on a fresh sandbox.
-
-### `POST /v1/snapshots`
-
-Takes a snapshot of the whole workspace now. If attempts are running, the driver freezes their agent CLIs for the duration of the snapshot and resumes them afterwards. The driver also snapshots on its own when the workspace goes idle after a turn, and when it has been busy for longer than the `max_interval` it was configured with.
-
-### `POST /v1/drain`
-
-`{ "phase": "draining" | "fenced" | "retired" }`
-
-| Phase | Driver behaviour |
-|---|---|
-| `draining` | Accepts no new turns (`423`); running turns finish; repeating it renews the drain |
-| `fenced` | Rejects every write; takes a final snapshot and reports its id |
-| `retired` | Stops all attempts; the sandbox can be killed |
-
-`draining` can be reverted with `{ "phase": "open" }` only before `fenced`, so a failed replacement leaves the old sandbox serving as before.
-
-## 5. Events
-
-Every event has the same envelope:
-
-```json
-{
-  "seq": 42,
-  "turn": "slack:C123:1712.0000/01JA0...",
-  "attempt": 1,
-  "grant": { "generation": 7, "epoch": 12 },
-  "at": "2026-09-30T12:00:03.402Z",
-  "kind": "delta",
-  "data": { "text": "Looking at the failing test" }
-}
-```
-
-| `kind` | `data` |
-|---|---|
-| `attempt.started` | `session` (needed to resume if the session dies) |
-| `delta` | `text` |
-| `tool` | `step`, `name`, `status` (`started`, `completed`, `failed`) |
-| `step` | `step`, `commit`: the shadow-repository commit for a completed step |
-| `sdk` | The SDK's own message, passed through unchanged, for transcripts and debugging |
-| `notice` | `kind` (`resuming`, `denied_tool`), human-readable `text` |
-| `turn.completed` | `session` |
-| `turn.failed` | `reason` |
-| `snapshot.completed` | `snapshot` |
-
-Ordering: `seq` increases by one per event within a turn, across attempts. `turn.completed` or `turn.failed` is the last event of an attempt. `snapshot.completed` is reported on the stream of every turn it covers.
-
-## 6. Errors
+## 7. Errors
 
 Errors are JSON: `{ "error": "<code>", "detail": "..." }`.
 
 | Status | Codes |
 |---|---|
 | `400` | `unsupported_protocol`, `invalid_request` |
-| `401` | `unauthorized` |
-| `409` | `superseded`, `boot_changed`, `stale_attempt`, `attempt_running`, `conversation_busy` |
-| `404` | `unknown_turn` (pull or interrupt for a turn the driver never saw) |
-| `423` | `draining` |
-| `429` | `capacity` |
+| `401` | `unauthorized`, including a token of an earlier grant |
+| `404` | `unknown_conversation` |
+| `409` | `not_awaiting_restore` |
+| `422` | `unsupported` |
 | `503` | `not_ready` |
 
-## 7. Inside the sandbox (not part of the wire protocol)
+## 8. Inside the sandbox
 
-- The driver is one process, compiled from TypeScript into a single executable, running as its own user. It hosts the Claude Agent SDK and the Codex SDK in-process.
-- The agent CLIs the SDKs start run as the agent's user, through `spawnClaudeCodeProcess` (Claude) and `codexPathOverride` (Codex) pointing at a small wrapper. Every tool the agent runs inherits that user, so it cannot read the driver's memory, its grants directory, the driver token or snapshot credentials.
-- Tool admission: for Claude, the SDK's `canUseTool` callback checks the conversation's lease in-process, and a post-tool hook tells the driver to commit a step. The Codex SDK has no per-tool callback, so when a Codex conversation's lease lapses the driver closes its session.
-- The shadow repository lives at `/var/lib/roost/shadow.git`, owned by the driver's user. The driver is its only writer and serializes commits from all conversations.
-- A freeze is SIGSTOP on the process group of each running agent CLI, then SIGCONT after the snapshot. Tool calls and network requests simply resume.
-- Snapshots are taken with kopia using the per-turn credentials from the submission.
-
-## 8. What changed from the production system it comes from
-
-The protocol generalises the one running in production behind Museon's agents. Names and mechanisms changed as follows.
-
-| Production | roost | Why |
-|---|---|---|
-| Host runs `curl 127.0.0.1:8789/...` inside the sandbox through `commands.run` | The control plane calls the driver's endpoint directly | One HTTP call instead of a process spawn per request |
-| The worker pushes event batches to the API | The control plane pulls with a cursor | No public address needed; re-reads are safe |
-| Proxy (`driver.py`) plus one Python worker per conversation hosting `ClaudeSDKClient` | `roost-driver`: one process hosting every conversation's SDK session | One process instead of a proxy and N workers; the TypeScript SDK is the same official interface |
-| Idle-session LRU cap (`MAX_IDLE_SESSIONS`) | `session.idle_timeout` and `session.max_live` | Kept |
-| `worker_instance_id` (random per worker process) | `attempt` for the process, `boot_id` for the driver | The same idea one level up: a new id means the old one's memory and authority are gone |
-| Random `fencing_token` and lease on the session row; a different token is accepted when the worker is idle and rejected (`token_rebind`) when it is busy | `grant` with an ordered `epoch`, `generation` and `lease_ms`; lower epochs are always rejected | A late request from a stale instance is rejected by order, idle or busy, and across driver restarts |
-| `TOKEN_BINDINGS` in proxy memory | Highest epoch per conversation, persisted by the driver | Survives a driver restart |
-| Grant echoed in the event-ingest response | Grant carried on every pull | Pull replaces push |
-| `museon.agent_driver_command.v1` verbs | REST resources | Plain HTTP semantics |
-| `receipt` verb | Dropped | Submitting again is idempotent and answers the same question |
-| `runtime_replacement` phases (open, draining, fenced, retired) | `POST /v1/drain` with the same phases | Kept as is |
-| `record_kind: cc_message` | `kind: sdk` | Not tied to one SDK |
-| `driver_alive` per second and a 5 s process heartbeat | `quiet_ms` on every pull | One liveness signal, computed by the driver, with no extra events |
-| `cc_session_id` in a sandbox file | `session` in the submission and in `turn.completed` | The control plane owns it; it survives the sandbox |
-| `compact`, `context`, `query_with_state` | Dropped | SDK-specific; may return as an SDK passthrough |
-| `turn_preparation` permit | `POST /v1/sessions/{conversation}/warm` | Warming is the part worth keeping; memory hydration is a product concern |
-| `token_rebind`, `restart_session` | Dropped | A higher epoch stops the old attempt; restarting a session is an interrupt followed by the next attempt |
-| `museoncli_config`, lark context, host MCP tools | Dropped | Product features, not runtime |
+- The sandbox is the workspace's trust boundary. The driver runs as root; the agent host and the tools it runs share the agent's user, as in any coding agent.
+- The driver token, the lock and the backup capture belong to the root-owned driver and are out of the agent's reach.
+- Code the agent runs can read the model key and change the agent's own storage. Neither reaches beyond the workspace, and the model key can be revoked at any time. Confining the agent's tools is planned work ([RFC 0001, last section](../rfcs/0001-durable-agent-runtime.md#later-confinement-and-environment-capture)).
+- A sandbox created from a snapshot starts from the template; nothing from the source's processes runs in it.

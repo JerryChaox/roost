@@ -1,226 +1,255 @@
-# RFC 0001: roost, a durable runtime for agent SDKs
+# RFC 0001: roost, a durable agent runtime built on Pi Durable
 
 | | |
 |---|---|
 | Status | Draft |
 | Created | 2026-09-30 |
-| Contracts | [specs/contracts.md](../specs/contracts.md) |
+| Contracts | [specs/contracts.md](../specs/contracts.md) · [specs/driver-protocol.md](../specs/driver-protocol.md) |
 
 ## Summary
 
-roost runs agent SDKs such as Claude Code and Codex for many users at once, on sandboxes that can be killed, paused, replaced or upgraded at any time. It keeps everything that matters about an agent outside the sandbox: conversations and turns in roost's own database, and the agent's files and sessions in object storage the operator owns. A sandbox is only ever a place to run the next step.
+roost runs durable agents for many users at once. The agent loop is [Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable): it calls the model, runs tools, and commits every step before showing it. roost is the agent layer on top of a sandbox platform: it gives each workspace one long-lived sandbox on E2B and runs Pi inside it. Around it, roost guarantees that exactly one agent loop owns a workspace at any moment, backs the workspace up continuously so it can be restored or branched from any step, keeps provider keys out of the sandbox, and makes the whole system operable.
 
-This RFC describes the model, the guarantees each layer makes, where state lives, and the decisions behind them. The normative interfaces are in the contracts spec.
+This RFC explains the principles, the model, where state lives, and why. The normative interfaces are in the contracts and the sandbox protocols.
 
 ## Motivation
 
-Teams that put agent SDKs behind a chat or a product hit the same failures:
+Teams that run agents for their users hit the same failures:
 
-- **Sandboxes die.** They time out, get paused or crash, and the conversation's files and context go with them.
-- **Deliveries repeat.** Webhooks retry, and the agent answers the same message twice.
-- **Agents hang.** A turn stalls halfway through a task and nobody notices.
-- **Runtimes change.** Shipping a new image forces every live conversation to start over.
-- **Users open more threads.** Either each thread gets its own sandbox and can't see the others' files, or two threads edit the same files at once.
+- **Sandboxes die.** They time out, get paused or crash, and the agent's files and context go with them.
+- **Processes die mid-task.** The work is lost, or redone from the start.
+- **Two copies run at once.** A retried request, a stale instance or a restored sandbox ends up with two agents writing the same state.
+- **Credentials leak.** An agent that runs generated code next to a model key can be talked into sending it out.
+- **Environments can't be reproduced.** Debugging a run, or branching it many times for evaluation or reinforcement learning, needs the exact workspace at an exact step.
 
-Enterprises add three requirements on top: tenants must be isolated, the data must stay in storage they control, and the whole thing must be operable, by people and by agents.
+Enterprises add three requirements: tenants must be isolated, the data must stay in storage they control, and the whole system must be operable, by people and by agents.
 
-Sandbox providers solve "give me a machine". Agent frameworks solve "write an agent". Nothing in between owns the agent's life across machines. roost is that layer.
+## Principles
+
+1. **Conversation facts belong to the agent.** Transcripts, inboxes, message idempotency and run state are written by the agent loop and live in its storage. roost keeps no copy and adds no conversation layer; it routes requests to the agent and maps them onto the agent's conversation interface.
+2. **roost owns execution.** The one fact roost decides is which process may run a workspace. Every workspace has at most one live execution grant, and every request goes to the grant's holder.
+3. **The sandbox is the trust boundary.** The agent loop and the code it runs share a user, as in any coding agent. What must stay out of that code's reach, roost keeps outside the sandbox or in the root-owned driver. Confining the agent's tools inside the sandbox is planned ([last section](#later-confinement-and-environment-capture)).
+4. **Capture is cheap inside, heavy work is outside.** The sandbox belongs to the agent; roost's own work in it is limited to what only the sandbox can do.
+
+## Where roost sits
+
+roost is one layer, not a sandbox platform. The split follows DeepSeek's DSec, whose cluster services, node runtime and sandbox backends correspond to E2B, and whose per-rollout worker and agent harness correspond to roost.
+
+| Layer | Owns | Here |
+|---|---|---|
+| Cluster services | Model access with virtual keys, object storage, databases | An LLM gateway such as LiteLLM; S3 or GCS; SQLite or Postgres |
+| **roost**, the agent layer | Tenants and routing, execution grants, the agent in each sandbox, continuous backups, operator tooling | `roost-core` and the `roost serve` and `roost backup` built on it; `roost-driver` and `roost-agent-pi` in each sandbox |
+| Sandbox platform | Placement, nodes, images, microVMs, egress allow lists | E2B Cloud or E2B Embed |
+
+roost never schedules sandboxes, builds a hypervisor or proxies model traffic. It uses the layer below through its API and the services beside it through theirs.
 
 ## Goals
 
-1. Address an agent, not a sandbox: send messages to a conversation, read events back.
-2. Survive sandbox loss, redoing at most the work since the last snapshot.
-3. Answer every message once, even when it is delivered more than once.
-4. Isolate tenants completely; keep agent data in the operator's own storage.
-5. Run any agent SDK that can be driven from a command line, starting with Claude Code and Codex.
+1. Address an agent, not a sandbox: send messages to a conversation, read its transcript and events back.
+2. Keep exactly one agent loop per workspace, across restarts, reboots, restores and control-plane failover.
+3. Survive process crashes, stuck sandboxes and host restarts without losing finished steps.
+4. Back every workspace up as it runs, and restore or branch it from any step, on any deployment.
+5. Isolate tenants completely, and keep provider keys and repository credentials out of every sandbox.
 6. Be operable end to end from a CLI that an agent can use.
 
 ## Non-goals
 
-- **Writing agents.** roost runs agent SDKs as they are; it is not an agent framework.
-- **Providing sandboxes.** roost drives Docker and E2B; it does not implement a hypervisor.
-- **Exactly-once side effects.** Answers are deduplicated and stale executors are fenced off, but a step that was running when a machine died may run again.
-- **Workflow orchestration.** roost has conversations and turns, not DAGs.
-- **Rich rendering.** Channel adapters stream plain text; product-specific cards stay in the product.
+- **Writing an agent loop.** Pi Durable is the agent loop.
+- **Running other agent CLIs** such as Claude Code or Codex.
+- **Chat integrations.** Slack, Feishu or Telegram bots are built on the conversation API.
+- **Providing sandboxes.** roost drives E2B.
+- **Exactly-once side effects.** A tool that was running when a process died is not run again unless it is declared safe to replay; side effects it caused are not undone.
 
 ## Model
 
 ```text
 tenant                      isolation boundary: nothing crosses it
-└─ Workspace                the agent's computer: files, sessions, one sandbox at a time
-   ├─ Conversation          a thread with its own inbox, session and reply route
-   │  └─ Turn               one run of the agent over the messages waiting in the inbox
+└─ Workspace                the agent's computer: one long-lived sandbox, its files and the agent's storage
+   ├─ Conversation          a Pi conversation: transcript, inbox, agent settings
+   │  └─ Run                one run of the agent, from an input to its final answer
    └─ Conversation
-      └─ Turn
 ```
 
-- A **tenant** is the isolation boundary. Data, credentials and snapshots never cross it.
-- A **Workspace** is the trust boundary. Conversations in one workspace share its files and trust each other, like two terminal windows on one machine. A workspace is bound to at most one sandbox at a time, and that sandbox is replaceable.
-- A **Conversation** has an inbox, its own agent session and a reply route. It runs one turn at a time.
-- A **Turn** is one run of the agent. It is identified by a stable id and may be retried.
-- A **grant** decides which executor may act for a conversation. It is internal: users never see it, but every write back to roost carries it.
-
-Only Workspace, Conversation and Turn appear in the public vocabulary.
+- A **tenant** is the isolation boundary.
+- A **Workspace** is the unit of execution and of backup. It has one sandbox at a time, one agent loop and one execution grant. Its name is chosen by the application, often one per end user.
+- A **Conversation** is the agent's own object. It is addressed as `(workspace, conversation)`; a caller may give it a `key`, such as a chat thread id, unique within the workspace.
+- A **Run** answers an input. It is made of turns, each one model response and its tool calls.
 
 ## Layers and their guarantees
 
 | Layer | What roost does | What it guarantees |
 |---|---|---|
-| Access | Channel adapters (Feishu, Slack, Telegram) and the conversation API | Each message gets in once. Replies return to the thread they came from. |
-| Workspace | Binds a workspace to a sandbox; wakes it on demand, lets it sleep, replaces it to recover or upgrade | The workspace survives any sandbox; at worst the work since the last snapshot is redone. Idle agents cost nothing. Upgrades don't restart conversations. |
-| Conversation | Deduplicates, queues and batches messages into turns; issues and revokes grants | Answered once, even when delivered twice. One turn at a time. One live executor. |
-| Turn | Runs the conversation's agent session through the official SDK and watches it | Streams live. A hung turn recovers on its own. Process dies: resume at the step. Sandbox comes back: continue where it stopped. Sandbox gone: resume from the last snapshot. |
-| Infrastructure | Sandboxes (Docker, E2B Cloud, E2B Embed), state (SQLite, Postgres), snapshots (S3, GCS, local directory) | Swap a provider and nothing above changes. |
-
-Operations run across every layer through the `roost` CLI.
+| API | Authenticates and routes conversation, workspace and operator requests | Every request reaches the workspace's one agent loop. Sleeping workspaces stay readable. |
+| Execution | Issues execution grants, starts and supervises drivers, rotates and revokes tokens | One agent loop per workspace, whatever fails. |
+| Agent | Runs Pi Durable in the sandbox | Every step is committed before it is shown; a crashed run continues from its last step; a message is admitted once. |
+| Backup | Captures changes in the sandbox, stores them outside as content-addressed snapshots | Restore or branch any workspace from any step, on any deployment. |
+| Credentials | Mints a model key per grant at an LLM gateway, or relies on E2B's egress proxy | Provider keys never enter a sandbox. One revocation stops a workspace's agent. |
+| Infrastructure | E2B Cloud or E2B Embed; SQLite or Postgres; a persistent disk or object storage for the repository | The same API on both. |
 
 ## State
 
-Every fact has one owner and one place.
+| State | Owner and place |
+|---|---|
+| Transcripts, inboxes, message idempotency, run checkpoints | The agent: Pi's SQLite storage in `/var/lib/roost/agent` on the sandbox's disk |
+| Workspace files | The sandbox's disk, under the persistent paths the Kit declares |
+| Workspaces and their phases, execution grants, audit | roost's database |
+| Snapshots | The tenant's kopia repository |
+| Sandboxes, running or paused; templates | E2B |
+| Tenants, provider keys and repository passwords (secret references), Kits, policies | `roost.yaml` |
 
-| State | Where | Granularity |
-|---|---|---|
-| Conversations, inboxes, turns, grants, workspace bindings, events, audit | roost database (SQLite or Postgres) | Transactional |
-| Workspace files and agent sessions | A shadow git repository inside the sandbox | Every step |
-| The whole workspace, including the shadow repository | kopia snapshot to object storage, one repository per workspace | When the workspace goes idle after a turn, and at least every `max_interval` |
-| Files larger than a threshold (default 10 MiB) | Excluded from the shadow repository; kopia only | With every snapshot |
-| Processes and memory | The sandbox; pause and resume only make it faster | Disposable |
+Snapshots and the read-only projection are copies of past states. A restore starts a new sandbox from one; the live state always has one owner.
 
-Rules:
+roost's database holds only what roost decides, in three tables:
 
-- **Sandbox state is not copied.** Whether a sandbox is running, paused or gone is the provider's fact; roost asks the provider, listing by labels in one call when it needs many.
-- **Provider volumes are not used.** See [Alternatives](#alternatives-considered).
-- **A snapshot covers the whole workspace at one instant.** Conversations share the workspace's files, so their sessions and those files must come from the same moment; snapshotting one conversation's part would restore sessions and files that disagree.
-- **Snapshots are taken when nothing is running.** The driver takes one as soon as the workspace goes idle after a turn. If the workspace has been busy for longer than `snapshot.max_interval` (default 10 minutes), the driver freezes every running agent process (SIGSTOP on its process group), takes the snapshot, and resumes them (SIGCONT). Snapshots are incremental, so the freeze usually lasts seconds.
-- **The driver is the only writer of the shadow repository.** Step commits from all conversations are serialized; each is a checkpoint of the whole workspace, labelled with the conversation and step that caused it.
-- **Rebuildable directories are excluded** from both layers (for example `node_modules`, build caches).
-- **Credentials that roost injects are never persisted.** They live on tmpfs or are injected by an egress proxy.
-- **One kopia repository per workspace.** Its key is present inside the sandbox; sharing a repository across workspaces would break the workspace trust boundary.
+- **`workspaces`**: what each workspace is (name, owner, runtime configuration, `forked_from`) and where roost has taken it, its phase: `provisioning`, `active`, `restoring` or `failed`. A restore is a phase of the workspace, not a separate record; a fork is new workspaces `provisioning` from a snapshot.
+- **`grants`**: one row per execution grant, live or ended, with the reason it ended and whether its model key is revoked.
+- **`audit`**: who asked for what, and how each restore ended.
 
-Recovery always uses the freshest state that survived; the snapshot is the last resort:
+Two things share a table only if they are one-to-one at every moment, change in the same transitions and have the same writer. No table records work to be done: roost reconciles these rows with what E2B and the drivers report, and repeats an idempotent step until they agree. A crash only means the step runs again.
+
+## Execution grant
+
+A workspace has at most one live grant: `{ workspace, sandbox, start, driver token, backup token, model key }`.
+
+- **Issued** as a row of the `grants` table whenever the control plane starts a driver: on creation, reboot, restore, fork, upgrade, or when the driver stops answering. Issuing ends the previous grant in the same transaction, and a partial unique index allows one live grant per workspace.
+- **Checked** by the driver for every request (the driver token from the control plane, the backup token from `roost backup`, which reaches only backup, restore and state) and by the LLM gateway for every model call (model key). Older tokens are rejected and older model keys are revoked; a revocation is retried until the gateway confirms it.
+- **Rotated** in place when a new control-plane process takes over: the driver token changes, so requests from the earlier process lose effect without a restart.
+- **Ended** before a restore replaces the sandbox: the model key is revoked at the LLM gateway, so an agent loop left in the old sandbox cannot call a model.
+
+Inside the sandbox, the driver locks the agent's storage and supervises exactly one agent host, so the grant maps to exactly one process. The path of every request is tenant → workspace → grant → driver → agent host → conversation. Requests reach a workspace only while it is `active`.
+
+## Inside the sandbox
+
+Two processes:
+
+- **`roost-driver`** (Go, root) is roost's part. It gates requests with the grant's tokens and forwards conversation requests to the agent host without parsing them. It also supervises the agent host, locks agent storage, carries the grant and captures backup data. It does not understand conversations.
+- **The agent host** (`roost-agent-pi`, TypeScript, the agent's user) is Pi Durable with Pi's system prompt, coding tools, skills and `AGENTS.md`, modelled on Pi's own experimental durable coding agent. It serves the conversation interface over a Unix socket and tells the driver when a step finishes.
+
+The driver and the host speak JSON-RPC over stdio for control (`initialize`, `quiesce`, `resume`, `state`, `shutdown`, `snapshot`). Model credentials reach the host there, never through files or environments. Any agent loop that implements the conversation interface and the control channel, and keeps its storage in SQLite in WAL mode, can replace Pi; the driver does not change. Pi Durable extensions extend the agent; extensions written for the `pi` CLI must be ported.
+
+## Recovery
 
 | Failure | Recovery | Work redone |
 |---|---|---|
-| Agent process dies or hangs | Kill it; start a new process in the same sandbox that resumes the SDK session at the last completed step | At most the step that was running |
-| Sandbox paused, restarted or unreachable, with its disk intact | Reconnect to the same sandbox. A paused E2B sandbox resumes with its processes and memory, and the turn simply continues; if the processes are gone, the turn resumes at the last completed step from the local shadow repository and session | None, or the step that was running |
-| Sandbox gone, or not back within `recover_wait` | Rebind the workspace to a new sandbox (next generation) and restore the last snapshot; every conversation resumes from its session in that snapshot | The work since the last snapshot |
-| Upgrade | At a turn boundary, start a sandbox from the new template and restore the latest snapshot | None |
+| Agent host crashes | The driver restarts it; Pi resumes interrupted runs | The model request in flight; a running tool returns `interrupted` unless it is safe to replay |
+| Driver crashes or hangs | A new driver under a new grant | The same |
+| Sandbox stuck or unreachable | Reboot it from its own disk, then a new driver under a new grant | The same, plus anything held only in memory |
+| Host or disk lost | Restore the workspace from its latest snapshot, on any machine | Changes not yet pulled by `roost backup`, at most a few seconds |
+| A change must be undone | `ws restore` to an earlier snapshot | Everything since that snapshot |
+| Control plane fails over | The new process takes the lock and rotates every grant | Nothing |
 
-A sandbox that comes back after its workspace was rebound is never used again: the control plane finds it by its labels and kills it. By then its leases have lapsed and nothing it uploads is chosen for a restore.
+## Backup and snapshots
+
+A snapshot is the template, the runtime configuration, the workspace's file tree and the agent storage's position. The root filesystem is not backed up; the template rebuilds it, so changes meant to last belong in the Kit or under a persistent path.
+
+- **Capture in the sandbox**, at low priority: the driver follows the agent storage's WAL continuously, and tracks changed files in the persistent paths with one fanotify mark on the filesystem. Events only say where to look; a metadata scan, after any overflow and on a timer, decides what changed.
+- **Heavy work outside, in kopia**: `roost backup` pulls the change stream from the driver and hands each workspace to [kopia](https://kopia.io), used as a library, as a filesystem built from that stream. kopia skips what did not change, reads changed files through the driver, splits them into content-defined chunks, compresses and encrypts them, and stores only new chunks. Each tenant has its own kopia repository and password, on the persistent disk, S3 or GCS, and kopia alone can restore its files.
+- **Snapshots** are taken after every step of a run, at the end of every run, on a timer and on request; each is one kopia snapshot. A snapshot is consistent for the conversation whose step produced it; across conversations running at the same moment it holds what a power loss would leave; a quiesced snapshot is consistent for all.
+- **Restoring into a sandbox**: a new sandbox's driver waits for the snapshot, and `roost backup` pushes the files and the agent storage into it. Nothing in a sandbox reads the repository; its password never enters one.
+- **Sleep only when backed up.** A workspace sleeps only after its backup has caught up, so its latest snapshot is complete and its transcripts can be read from the projection without waking it.
+- **Uses**: point-in-time restore; forking a snapshot into many independent workspaces, for experiments or reinforcement-learning rollouts, with chunks shared rather than copied; the read-only projection; disaster recovery.
+
+## Model credentials
+
+roost does not proxy model traffic; model access is a cluster service.
+
+- **E2B Embed** has no TLS interception, so the agent calls an **LLM gateway** with virtual keys, such as LiteLLM or Envoy AI Gateway. roost holds only the gateway's admin credential. It mints a virtual key for each grant, scoped to the workspace and the tenant, and revokes it when the grant ends. Provider keys, usage per tenant and budgets live in the gateway.
+- **E2B Cloud** injects keys in its egress proxy; the agent uses a placeholder, and revoking removes the injection from the sandbox's network configuration.
+- **Reaching the gateway on Embed**: E2B blocks private addresses from sandboxes unless the orchestrator node exempts them. The gateway therefore has a fixed address that every sandbox may reach and that Embed exempts as a `/32`; roost's manifests deploy LiteLLM this way and `roost doctor` checks it.
+- Code the agent runs can read the model key; it works only for one workspace and one grant and can be revoked at once.
 
 ## Sandboxes
 
-roost defines a sandbox interface modelled on the E2B API: lifecycle (create, connect with implicit resume, pause, kill, timeout), command execution with streaming output, file transfer, an endpoint for a port inside the sandbox, templates, and listing by labels.
+roost drives E2B through an interface modelled on its API: create from a template with a runtime configuration and labels, connect with implicit resume, pause, reboot from disk, kill, execute as a user, reach a port, update egress rules, build and find templates by alias, list by labels. **E2B Cloud** hosts Firecracker microVMs; **E2B Embed** self-hosts the same API on Linux machines with KVM and no E2B account, as a preview backend. E2B publishes no Go SDK, so roost generates its clients from the OpenAPI spec and envd protobufs in `e2b-dev/runtime`.
 
-Backends:
+What a sandbox contains and may do is declared with the [Docker Sandbox Kit Specification](https://github.com/docker/sandbox-kit-spec) (v3). roost assembles a workspace's Kits, adds the driver and the agent host, and builds an E2B template. A Kit's `volume@1` paths are the persistent, backed-up paths. A workspace keeps the configuration it was created with; a changed Kit set applies to new workspaces.
 
-- **Docker** for local development.
-- **E2B Cloud** for hosted Firecracker microVMs.
-- **E2B Embed** for self-hosting the same API on one Linux machine with no E2B account. Embed is new and single-node; roost treats it as a preview backend.
+## Code and processes
 
-roost does not drive Firecracker directly. E2B publishes no Go SDK, so roost generates its clients from the OpenAPI spec and envd protobufs in `e2b-dev/runtime`.
+Everything roost does outside the sandbox is one Go library, **`roost-core`**: execution grants, the workspace lifecycle, routing to the current grant, snapshots, restore and fork, model keys, the sandbox provider, the backup pipeline, and the reconcilers. It speaks no network protocol of its own. Two processes run it:
 
-### Kits
+- **`roost serve`** is the control plane: `roost-core` behind one HTTP API, for applications and operators alike. It authenticates, calls `roost-core` and runs the reconcilers that create sandboxes, issue grants, watch runs, revoke model keys and put workspaces to sleep. One process acts at a time, holding a lock in the database (SQLite by default, Postgres for more).
+- **`roost backup`** runs kopia: it pulls change streams, writes the repositories, pushes snapshots into restored and forked sandboxes, and answers `roost serve`'s reads of snapshot listings and the read-only projection, which it serves by running the agent host read-only on a snapshot's agent storage. The repositories have one holder.
 
-What a sandbox contains and what it is allowed to do is declared with the [Docker Sandbox Kit Specification](https://github.com/docker/sandbox-kit-spec) (v3): an image plus typed capabilities for network egress, credentials, persistent paths, lifecycle hooks, ports, resources and agent sessions. roost resolves and assembles a workspace's Kits, builds a provider template from the result, and caches it by the digest of the resolved set.
+Both, and the CLI, are one `roost` binary. In every sandbox run **`roost-driver`** and **`roost-agent-pi`**; when a release changes them, sandboxes get them in place at their next quiet moment.
 
-Each backend publishes a capability support matrix. A Kit that needs a capability the backend cannot enforce is rejected before any sandbox is created. A Kit update that widens permissions waits for operator approval.
-
-roost's own configuration (`roost.yaml`) covers only what Kits cannot: how workspaces are assigned, when sandboxes sleep, how busy conversations treat new messages, watchdog thresholds, retries and tenant quotas.
-
-## Access
-
-- **Channel adapters** receive webhooks directly. The adapter derives the conversation id from the channel's natural keys, records the reply route when the conversation is created, and streams replies back as plain text by editing one message.
-- **The conversation API** serves channel-less applications such as websites. The application creates and lists conversations by its own user id (`owner`), sends messages with an idempotency key, and reads events over SSE.
-
-## Turns and agent sessions
-
-- The driver runs agents through their official TypeScript SDKs: the Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) and the Codex SDK (`@openai/codex-sdk`). They are the supported interface; the stdio protocol between each SDK and its CLI is not.
-- Starting an agent CLI costs seconds however it is done, so a conversation's session stays alive between turns. The driver closes it after `session.idle_timeout` and caps the number of live sessions per sandbox, closing the least recently used first. The next turn resumes the closed session from its files (`resume` in the Claude SDK, `resumeThread` in the Codex SDK).
-- When a message lands in a conversation's inbox, the control plane asks the driver to warm the session, so the start-up overlaps the batch window.
-- SDK output is forwarded as events as it arrives, including partial text.
-- A conversation that receives messages while busy queues and batches them by default; it can be configured to interrupt the running turn, or (Claude Code) to inject into it.
-- The watchdog uses two clocks: liveness (any activity) and progress (any renderable output). Escalation is persisted: restart the process, then replace the sandbox, then give up and mark the turn for attention. A wall-clock ceiling marks the turn for attention without killing anything.
-
-## Processes
-
-- **`roost`** is the CLI and the control plane. One process, SQLite by default, Postgres for more.
-- **`roost-driver`** is a TypeScript program compiled into a single executable, embedded in `roost` and copied into every sandbox. It hosts the agent SDKs, keeps the shadow repository and takes snapshots. Its hash and the protocol version form the runtime fingerprint; control-plane releases do not force sandbox replacement.
-- The driver and the agent run as different users. The SDKs run inside the driver; the agent CLIs they start, and every tool those CLIs run, run as the agent's user (through `spawnClaudeCodeProcess` in the Claude SDK and `codexPathOverride` in the Codex SDK). Grants, epochs, the driver token and snapshot credentials therefore stay out of the agent's reach.
-- The wire types shared by the Go control plane and the TypeScript driver are generated from one schema.
-- The control plane reaches the driver through the provider's endpoint, so `roost` needs no public address.
-- The driver's control interface is not reachable by the agent.
+The HTTP API is the public contract; the Go API of `roost-core` is not yet stable. `roost serve` and `roost backup` reach the driver through E2B's endpoint, so roost needs no public address. Model access uses an LLM gateway deployed beside roost.
 
 ## Operations
 
-The `roost` CLI uses `roost <object> <verb>` and covers every layer: `status`, `doctor`, `channel status`, `ws inspect|recover`, `conv inspect|timeline|transcript|reset`, `turn logs|retry`. It is a thin client of the control-plane API, prints `--json`, ships a `SKILL.md` for agents, requires an operator token and `--reason` for anything that changes state, supports `--dry-run`, audits every change, and is not available inside sandboxes.
+The `roost` CLI uses `roost <object> <verb>`: `status`, `doctor`, `ws inspect|recover|revoke|snapshots|snapshot|restore|fork`, `conv list|transcript|interrupt|reset`. It is a thin client of the HTTP API of `roost serve`, prints `--json`, ships a `SKILL.md` for agents, requires an operator token and `--reason` for anything that changes state, supports `--dry-run`, audits every change, and refuses to run inside a sandbox.
 
 ## Deployment
 
-Every way to run roost is one command.
-
 | Where | You need | Command | What runs |
 |---|---|---|---|
-| A laptop | Docker | `roost up` | roost with SQLite and Docker sandboxes; no KVM needed |
-| One Linux machine | KVM and Docker | `docker compose up -d --wait` | roost plus a pinned E2B Embed, with all state on the machine's data disk |
-| GCP or AWS | A cloud project or account | `terraform apply` | A VM with nested virtualization and a separate persistent data disk with scheduled disk snapshots, running the same compose stack |
-| Kubernetes | One node with KVM | `kubectl apply -k` | A StatefulSet with a persistent volume |
+| Any machine, E2B Cloud | An E2B account | `roost up` | `roost serve` and `roost backup`; sandboxes and key injection on E2B Cloud |
+| One Linux machine | KVM and Docker | `docker compose up -d --wait` | `roost serve`, `roost backup`, LiteLLM and a pinned E2B Embed, all state on the data disk |
+| GCP | A project | `terraform apply` | A VM with nested virtualization and a persistent data disk, running the same compose stack |
+| Kubernetes | Nodes with KVM | `kubectl apply -k` | E2B Embed, roost's processes, and LiteLLM behind a Service with a fixed cluster IP |
 
-Adding object storage (`snapshot.store`) is optional. It is needed only to move workspaces between machines or providers, to run more than one node, or to survive losing the whole data disk.
-
-Single-node rules:
-
-- **roost uses SQLite on the data disk.** No database is added beyond what E2B Embed brings. roost does not use Embed's internal Postgres, so the two can be upgraded independently.
-- **Embed is pinned.** roost's compose file includes Embed's compose file at a fixed version.
-- **State lives on a persistent disk, not the VM.** On GCP and AWS the data disk is a Persistent Disk or EBS volume that survives the VM and is snapshotted on a schedule. E2B's own Terraform modules recreate the machine with a fresh disk; roost's add the data disk.
-- **Durability on one node.** If the VM dies, the disk survives with roost's state and every paused sandbox. Sandboxes that were running when the host went down restart from their last pause, and their conversations resume from the sessions saved in that pause. Idle sandboxes are paused, so only the ones busy at that moment are affected.
-- **One node is one failure domain.** While the machine is down its workspaces are unavailable; object storage is what lets them move elsewhere.
+In single-machine setups roost uses SQLite on the data disk and adds no database beyond Embed's; Embed is pinned at a fixed version; the backup repository defaults to the data disk and can live in S3 or GCS instead.
 
 ## Security
 
-- **Isolation:** tenant is the hard boundary; workspace is the trust boundary.
-- **Fencing:** every write back to roost carries the conversation's grant; writes from a replaced executor are rejected. Side effects an agent causes directly in the outside world are not fenced; the documented guarantee is that the running step may repeat.
-- **Credentials:** on E2B Cloud, Kit credentials are injected by the provider's egress proxy and never enter the sandbox. E2B Embed has no TLS interception, so proxy-managed credentials are rejected there until roost provides its own egress proxy.
+- **Tenants** are the hard boundary: workspaces, snapshots, chunks and credentials never cross them.
+- **The sandbox** is the trust boundary of a workspace. Inside it, the agent's code can read the model key and change the agent's storage; both stay within the workspace.
+- **Secrets** stay out of the agent's reach: provider keys in the LLM gateway or E2B's proxy, repository credentials in `roost backup`, the driver token in the root-owned driver.
+- **Egress** is limited to the Kit's destinations, and to the LLM gateway among private addresses.
+- **Fencing**: one grant per workspace, new tokens and a new model key per grant, rotation on failover and revocation on restore.
 
 ## Alternatives considered
 
 | Alternative | Decision | Why |
 |---|---|---|
-| Tar the whole workspace to object storage | Rejected | Grows without bound, captures rebuildable junk, is not consistent mid-turn, and captured credentials |
-| Provider volumes | Rejected | E2B volumes are a private beta on NFS; E2B advises against git, package installs and SQLite on them; they are disabled in Embed |
-| rclone for snapshots | Superseded | Mirrors only the latest state and is not atomic; kopia snapshots are atomic and versioned |
-| restic for snapshots | Not chosen | Comparable model, but no public Go packages and heavier repository maintenance |
-| Drive Firecracker directly | Deferred | E2B Embed already provides self-hosted Firecracker with the same API |
-| Keep a copy of sandbox state | Rejected | It is the provider's fact; a copy drifts |
-| Python control plane | Replaced | One Go install covers the CLI and the control plane |
-| One agent process per turn | Rejected | Starting an agent CLI costs seconds; sessions stay warm between turns instead |
-| Go driver speaking each CLI's stdio protocol | Rejected | That protocol is undocumented; the SDKs are the supported interface |
-| Go driver plus a separate TypeScript process hosting the SDKs | Rejected | One more process and one more protocol, for no isolation gain: the SDK host does not have to share the agent's user |
+| A conversation layer in roost (conversation tables, message dedupe, inboxes) | Rejected | It duplicates facts the agent owns, and every duplicate needs reconciliation on restore and fork |
+| Host Claude Code and Codex through their SDKs | Rejected | Their loops are opaque; durability would stop at the session file |
+| The `pi` CLI in RPC mode | Rejected | It persists the conversation but not the execution; a run interrupted mid-step needs a person to continue it |
+| A durable agent loop of roost's own | Rejected | Pi Durable already commits every step and makes submissions idempotent |
+| Separate OS users for the agent loop and its tools | Rejected | It costs a privileged helper and an RPC for every tool call; confinement, when it comes, uses Landlock instead |
+| Run backup work inside the sandbox | Rejected | It would compete with the agent; only capture stays inside, at low priority |
+| Read sandbox disks from the E2B Embed host | Deferred | Needs E2B's internal storage format or a change to its orchestrator, and works on Embed only |
+| inotify for change tracking | Rejected | One watch per directory, races on new directories, limits on large trees; fanotify covers a filesystem with one mark |
+| btrfs for atomic snapshots | Deferred | E2B's guest kernel is built without btrfs |
+| Tar the workspace on every snapshot | Rejected | Re-uploads everything each time; content-defined chunks upload only what changed and share data between branches |
+| A backup engine of roost's own | Rejected | kopia already does content-defined chunking, deduplication, encryption, retention and maintenance, and restores files without roost |
+| kopia running inside the sandbox | Rejected | It needs the repository's password, which would let the agent's code read or delete every workspace of the tenant |
+| A table of side effects to perform (an outbox) | Rejected | It repeats intent the workspace and grant rows already state; reconciling those rows against E2B and the drivers needs no second record |
+| A table of operations for restores and forks | Rejected | A restore is a phase of its workspace and a fork is new workspaces; a separate record would hold the same fact twice |
+| Back up the root filesystem | Rejected | The template rebuilds it; restoring system directories into a running machine is fragile |
+| Provider volumes or a network file system for workspaces | Rejected | E2B volumes are an NFS beta disabled in Embed; JuiceFS measured 6 to 11 s for `git status` and 64 to 141 s for `npm ci` |
+| Model keys in the sandbox's environment | Rejected | Any tool the agent runs could send them out |
+| A model gateway of roost's own | Rejected | LLM gateways with virtual keys, usage and budgets already exist; roost only mints and revokes keys |
+| A generic egress proxy injecting model keys | Rejected | Behind Embed's NAT it cannot tell sandboxes apart, so it cannot scope or revoke per workspace; it also needs TLS interception and a CA in every template |
+| roost as a library only, embedded in the application's backend | Rejected | Only Go backends could use it; the loops that keep one live agent per workspace need a long-running process, which a serverless or scaled-to-zero backend is not; E2B and gateway credentials would spread into every caller |
+| A Docker backend | Rejected | It has neither credential injection nor microVM isolation |
+| Channel adapters | Out of scope | Built on the conversation API by the integrator |
 
 ## Roadmap
 
 | Milestone | Scope |
 |---|---|
-| M0 · Contracts | Layer interfaces, the driver protocol, the Kit mapping, conformance scenarios |
-| M1 · Local | `roost up` on Docker with Claude Code, the Telegram adapter, the CLI |
-| M2 · Resilience | Watchdog, step checkpoints and turn snapshots, upgrades without restarts |
-| M3 · Launch | E2B Cloud and E2B Embed, Codex, Slack and Feishu adapters; one-command deployments (compose with E2B Embed, Terraform for GCP and AWS, Kubernetes) |
+| M0 · Contracts | The contracts, the sandbox protocols, the Kit mapping, conformance scenarios |
+| M1 · Agent | `roost-core` and `roost serve`, the driver, the Pi host, the conversation API, execution grants, E2B Cloud, the CLI |
+| M2 · Backup | Change capture, `roost backup` on kopia, snapshots, restore, fork, the read-only projection |
+| M3 · Self-hosted | E2B Embed with LiteLLM, one-command deployments |
 
-Later: rewinding a workspace to an earlier step or turn, roost's own egress proxy, more agent SDKs, multi-node control planes.
+After M3: confining the agent's tools and capturing environment directories ([last section](#later-confinement-and-environment-capture)).
 
-## Open questions
+## Later: confinement and environment capture
 
-1. Is the public vocabulary limited to Workspace, Conversation and Turn?
-2. Is the workspace the trust boundary, or does each conversation need its own OS user?
-3. How is recovery stated publicly: "resume at the step, or from the last snapshot"?
-4. When is the public announcement: after M3, or earlier?
+Not part of v1alpha1. Two additions, both drawn from DeepSeek's DSec, which runs agent reinforcement learning at scale and reports models searching platform files for answers, calling internal sockets and forging requests.
 
-To verify before M0 is closed:
+**Strict mode: confining the agent's tools.** It would become the default, with a relaxed mode for trusted interactive use.
 
-- E2B template builds from Kit images: the `agent` user (uid 1000) against E2B's default `user`, and private GHCR images.
-- E2B Embed end to end on a KVM host.
-- STS credentials scoped to a workspace prefix on RustFS, for local tests.
-- Resuming a Claude session after its CLI is killed mid-tool; resuming a Codex thread the same way; Codex stream granularity.
-- The driver compiled into one executable (`bun build --compile`) with both SDKs, starting their native CLIs inside a sandbox as another user.
-- Tool admission for Codex: its SDK has no per-tool callback like Claude's `canUseTool`, so a lapsed lease stops the Codex session instead of denying single tools.
-- kopia per-turn cost on a realistic workspace over 50 turns.
+- Tool processes start through `roost-driver confine`, which applies a Landlock ruleset before executing them: the persistent paths and `/tmp` read-write, system directories read-only, and no access to `/var/lib/roost`, `/run/roost` or the workspace's hidden paths (graders, reference answers). Landlock needs no privilege and its rules pass to child processes, so no second user is involved.
+- File tools that run inside the agent host resolve every path beneath a persistent path (`openat2` with `RESOLVE_BENEATH`) and refuse roost's directories and hidden paths.
+- `kernel.yama.ptrace_scope=1` keeps tools from reading the agent host's memory, and the host's socket accepts only the driver (`SO_PEERCRED`).
+- Hidden paths and the isolation mode become part of the runtime configuration; moving from strict to relaxed counts as widening permissions.
+- E2B's guest kernel has Landlock, Yama and SELinux, but not AppArmor, which DSec uses.
+
+**Environment capture: overlays over system directories.**
+
+- Before the agent starts, the driver mounts overlayfs over `/usr/local`, `/opt`, `/home` and `/root`, and any directory the Kit adds, with their writable layers on the sandbox's disk.
+- What the agent installs there is captured with the workspace and comes back with a snapshot, in the way DSec captures a sandbox's writable layer. The rest of the root filesystem still comes from the template.
+- Overlaying `/usr` or `/etc` after boot is fragile and left to Kits that need it.
