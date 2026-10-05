@@ -19,7 +19,7 @@ This document is the normative contract between roost and the things around it: 
 | Entry cursor | Opaque, ordered within a conversation | Agent |
 | Snapshot | `snap_<ulid>` | roost |
 | Restore | Caller-supplied, or `rs_<ulid>`; one restore, and its idempotency key | Caller or roost |
-| Execution grant | `{ workspace, sandbox, start, driver token, backup token, model key }`, identified by its `start`; internal | roost |
+| Execution grant | `{ workspace, sandbox, start, driver token, backup token, model credentials }`, identified by its `start`; internal | roost |
 
 A conversation is addressed by two fields, `(workspace, conversation)`. roost stores no conversations: their transcripts, inboxes and idempotency belong to the agent's storage in the workspace.
 
@@ -30,18 +30,17 @@ Every API is scoped to one tenant: a tenant API key implies it, and an operator 
 These hold in every deployment and every configuration. None of them can be turned off.
 
 1. A workspace MUST have at most one live execution grant, and every request for the workspace MUST be routed to the driver that holds it.
-2. Only the control plane MAY start a driver. Each grant MUST carry a new driver token, a new backup token and a new model key; requests carrying an earlier token MUST be rejected, and an earlier model key MUST be revoked.
+2. Only the control plane MAY start a driver. Each grant MUST carry a new driver token, a new backup token and new model credentials; requests carrying an earlier token MUST be rejected, and the model credentials of an earlier grant MUST be revoked.
 3. A sandbox MUST run at most one agent host, and agent storage MUST be open in at most one agent loop.
 4. At most one control-plane process MAY act at a time.
 5. Workspaces, sandboxes, snapshots, credentials and caches MUST be scoped to one tenant; a workspace MUST be forked only within its tenant.
-6. Model provider keys MUST NOT enter a sandbox.
-7. Backup data MUST leave the sandbox only by being pulled from the driver; no repository credential enters a sandbox.
-8. A workspace MUST NOT sleep until its backup has caught up with its last change.
-9. The sandbox of a workspace's live grant MUST NOT be removed.
-10. A sandbox created from a snapshot MUST start from the template; nothing from the source's processes runs in it.
-11. roost MUST NOT store a copy of a sandbox's lifecycle state; it asks the provider.
-12. A Kit that requires a capability the provider cannot enforce MUST be rejected before any sandbox is created. A request that widens permissions, including a restore or fork to a wider runtime configuration, MUST carry an operator's approval and is refused without it; nothing waits for approval.
-13. Requests for conversations MUST reach a workspace only while it is `active`.
+6. Backup data MUST leave the sandbox only by being pulled from the driver; no repository credential enters a sandbox.
+7. A workspace MUST NOT sleep until its backup has caught up with its last change.
+8. The sandbox of a workspace's live grant MUST NOT be removed.
+9. A sandbox created from a snapshot MUST start from the template; nothing from the source's processes runs in it.
+10. roost MUST NOT store a copy of a sandbox's lifecycle state; it asks the provider.
+11. A Kit that requires a capability the provider cannot enforce MUST be rejected before any sandbox is created. A request that widens permissions, including a restore or fork to a wider runtime configuration, MUST carry an operator's approval and is refused without it; nothing waits for approval.
+12. Requests for conversations MUST reach a workspace only while it is `active`.
 
 ## 3. Conversation API
 
@@ -92,7 +91,7 @@ Under `/v1/workspaces/{workspace}`, authenticated with a tenant API key or an op
 
 ### Workspace phases
 
-A workspace records what it is (its name, owner, runtime configuration and `forked_from`) and where roost has taken it, its **phase**. Whether its sandbox is running or paused is not a phase: E2B owns that fact (invariant 11).
+A workspace records what it is (its name, owner, runtime configuration and `forked_from`) and where roost has taken it, its **phase**. Whether its sandbox is running or paused is not a phase: E2B owns that fact (invariant 10).
 
 | From | To | When |
 |---|---|---|
@@ -133,7 +132,7 @@ Creates one workspace per name in the same tenant, each `provisioning` from the 
 | `403` | `needs_approval` (the request widens permissions and carries no operator approval) |
 | `404` | `unknown_workspace`, `unknown_snapshot` |
 | `409` | `workspace_busy` (the workspace is not `active`), `workspace_exists` |
-| `422` | `config_unresolvable` (a secret reference no longer resolves) |
+| `422` | `config_unresolvable` (a secret reference no longer resolves), `unsupported` (the `SecretProvider` cannot revoke) |
 
 ## 5. Operator API
 
@@ -142,21 +141,20 @@ Authenticated with an operator token; every request carries a `reason` and is au
 | Method and path | CLI | Effect |
 |---|---|---|
 | `POST /v1/workspaces/{w}/recover` | `ws recover` | Reboots the sandbox and starts a new driver under a new grant; moves a `failed` workspace back to `provisioning` |
-| `POST /v1/workspaces/{w}/revoke` | `ws revoke` | Revokes the live grant's model key at once: the agent can no longer call a model until a new grant is issued |
+| `POST /v1/workspaces/{w}/revoke` | `ws revoke` | Revokes the live grant's model credentials at once: the agent can no longer call a model until a new grant is issued |
 
 Conversation `interrupt` and `reset` are also available to operators through the CLI (`conv interrupt`, `conv reset`).
 
-## 6. Models and credentials
+## 6. Model credentials
 
-roost does not proxy model traffic. Model access is a cluster service: an **LLM gateway** with virtual keys (for example LiteLLM or Envoy AI Gateway), or the sandbox provider's egress proxy.
+roost does not proxy model traffic. Model access is a cluster service, and roost reaches it through one interface, the **`SecretProvider`**, chosen by `models.access`.
 
-- **Model keys**: every grant carries one. roost's model-access adapter mints it when the grant is issued and revokes it when the grant ends (a new grant or a restore) or on `ws revoke`. Revocation is retried until the gateway confirms it, and recorded on the grant (section 11).
-  - **E2B Embed**: a virtual key from the LLM gateway, scoped to the workspace and the tenant. Provider keys live in the gateway, which also reports usage per tenant and workspace.
-  - **E2B Cloud**: a placeholder. E2B's egress proxy injects the real keys (from `models.providers`) for the providers' domains; revoking removes the injection from the sandbox's network configuration.
-- The agent host receives the model endpoints and key over the control channel and calls models directly.
+- **Issue**: when a grant is issued, the `SecretProvider` returns the model endpoints and a credential, and a reference that roost stores on the grant (`model_key_ref`). The agent host receives the endpoints and the credential over the control channel and calls models directly.
+- **Revoke**: when the grant ends (a new grant or a restore) or on `ws revoke`, roost asks the `SecretProvider` to revoke the grant's credentials, retries until it confirms, and records the confirmation on the grant (`key_revoked_at`). A `SecretProvider` that cannot revoke says so; `ws revoke` then answers `422 unsupported`.
+- **Implementations**:
+  - `litellm`: a virtual key per grant at an LLM gateway, scoped to the workspace and the tenant, revoked at the gateway. Provider keys, usage and budgets live in the gateway.
+  - `e2b`: a placeholder; E2B Cloud's egress proxy replaces it with the provider key (`models.providers`) on requests to the providers' hosts. It cannot revoke.
 - **Reaching the LLM gateway on E2B Embed**: E2B denies sandbox egress to private ranges unless the orchestrator node exempts them. The gateway has a fixed address (`models.gateway.url`); every sandbox's egress rules allow it; E2B Embed sets `ALLOW_SANDBOX_INTERNAL_CIDRS` to it as a `/32`. roost's manifests deploy LiteLLM this way, and `roost doctor` checks it from a test sandbox.
-- Code the agent runs can read the model key. It works only for one workspace and one grant and can be revoked at any time.
-- Provider keys never enter a sandbox.
 
 ## 7. Backup
 
@@ -169,7 +167,7 @@ The engine is [kopia](https://kopia.io), used as a library by `roost backup`.
 - **Maintenance**: `roost backup` runs kopia's maintenance and retention as the repository's only owner.
 - **Filling a sandbox**: for a restore or a fork, `roost backup` assembles the snapshot, with the agent storage at the snapshot's position, and pushes it to the new sandbox's driver.
 - **Reads for `roost serve`**: snapshot listings and the read-only projection are served by `roost backup` on its internal API (`backup.api`), so the repository has one holder. For the projection, `roost backup` runs the agent host read-only on the agent storage of the latest snapshot, outside any sandbox ([sandbox protocols §4](driver-protocol.md#4-conversation-interface-served-by-the-agent-host)), so roost never reads the agent's storage format itself.
-- A workspace sleeps only after `roost backup` has stored everything up to its last change (invariant 8).
+- A workspace sleeps only after `roost backup` has stored everything up to its last change (invariant 7).
 - Backed-up paths are the Kit's `volume@1` paths, `/workspace` at least; paths under them can be excluded (for example `node_modules`).
 
 ## 8. Runs and the watchdog
@@ -189,7 +187,7 @@ The provider in v1alpha1 is E2B: E2B Cloud or E2B Embed, selected by API URL.
 
 | Group | Operations |
 |---|---|
-| Lifecycle | `Create(template, config, labels)`, `Connect(id)` (resumes if paused), `Pause(id)`, `Reboot(id)` (pause without keeping memory, then resume: a cold boot from the sandbox's disk), `Kill(id)` (invariant 9), timeouts that pause and never kill; a request to a paused sandbox's endpoint resumes it |
+| Lifecycle | `Create(template, config, labels)`, `Connect(id)` (resumes if paused), `Pause(id)`, `Reboot(id)` (pause without keeping memory, then resume: a cold boot from the sandbox's disk), `Kill(id)` (invariant 8), timeouts that pause and never kill; a request to a paused sandbox's endpoint resumes it |
 | Execution | `Exec(id, argv, env, user)` with streaming output |
 | Reachability | `Endpoint(id, port) → url, headers` |
 | Network | Update a running sandbox's egress rules |
@@ -221,7 +219,7 @@ E2B's own snapshots are not used; roost's snapshots come from the backup (sectio
 
 | State | Where |
 |---|---|
-| Tenants, provider keys and repository passwords (secret references), Kits, policies | `roost.yaml` |
+| Tenants, `SecretProvider` settings and repository passwords (secret references), Kits, policies | `roost.yaml` |
 | Workspaces, execution grants, audit | roost's database: the three tables below |
 | Transcripts, inboxes, message idempotency, run checkpoints | Agent storage: `/var/lib/roost/agent` on the sandbox's disk |
 | Workspace files | Persistent paths on the sandbox's disk |
@@ -245,10 +243,10 @@ The database holds only what roost decides: what each workspace is and where roo
 |---|---|
 | `id` | The grant's `start` |
 | `tenant`, `workspace`, `sandbox_id` | |
-| `driver_token`, `backup_token`, `model_key_ref` | The two tokens, and the LLM gateway's id for the model key (none on E2B Cloud) |
+| `driver_token`, `backup_token`, `model_key_ref` | The two tokens, and the `SecretProvider`'s reference to the grant's model credentials (none when it needs none) |
 | `issued_at`, `ended_at`, `end_reason` | `end_reason`: `driver_lost`, `stalled`, `rebooted`, `recover`, `upgrade` or `restore` |
 | `run` | The conversation and run a restart or reboot was for (section 8) |
-| `key_revoked_at` | When the gateway confirmed the model key's revocation |
+| `key_revoked_at` | When the `SecretProvider` confirmed the revocation of the grant's model credentials |
 
 A partial unique index on `(tenant, workspace) WHERE ended_at IS NULL` allows one live grant per workspace. Issuing a grant ends the previous one in the same transaction.
 
@@ -273,7 +271,7 @@ Reconcilers compare the database with what E2B and the drivers report, and act u
 | `roost serve` | `provisioning`, and the live grant's driver is ready | Phase to `active` |
 | `roost serve` | `active`, and a sandbox with the workspace's labels that is not the live grant's | Remove it |
 | `roost serve` | `active`, the live grant's driver stops answering or a run stalls | A new grant on the same sandbox (section 8) |
-| `roost serve` | An ended grant whose model key is not yet revoked | Revoke it at the LLM gateway |
+| `roost serve` | An ended grant whose model credentials are not yet revoked | Revoke them through the `SecretProvider` |
 | `roost serve` | `active`, idle for `workspace.sleep_after`, and the driver reports the backup caught up | Pause the sandbox |
 | `roost backup` | A live grant's driver reports changes | Pull them and store them |
 | `roost backup` | A live grant's driver waits for a snapshot | Push the snapshot to it |
@@ -319,7 +317,7 @@ Unknown keys are errors. Secrets appear only as references, never as values. The
 
 ## 14. CLI and processes
 
-- One binary, built on `roost-core`: `roost serve` (control plane), `roost backup`, and the CLI. Model access goes through an LLM gateway deployed beside roost (section 6).
+- One binary, built on `roost-core`: `roost serve` (control plane), `roost backup`, and the CLI. Model credentials come from a `SecretProvider` (section 6).
 - CLI shape: `roost <object> <verb> [args]`. Objects: `ws`, `conv`. `roost status` and `roost doctor` are global.
 - Verbs: `ws inspect`, `ws recover`, `ws revoke`, `ws snapshots`, `ws snapshot`, `ws restore`, `ws fork`; `conv list`, `conv transcript`, `conv interrupt`, `conv reset`.
 - Every command accepts `--json` with a stable, versioned schema. Exit codes: `0` success, `1` failure, `2` usage error, `3` not found, `4` conflict, `5` needs approval.
@@ -337,10 +335,10 @@ A release passes every scenario on E2B Cloud and on E2B Embed.
 2. A message sent while a run is going is answered in the next run (`queue`) or joins the running run (`steer`).
 3. Killing the agent host mid-run: it is restarted and the run continues from its last step.
 4. Rebooting a stuck sandbox keeps files and transcripts, and interrupted runs continue.
-5. After a new grant, or after `rotate`, every request with an older driver token is rejected; after a new grant, the older model key reaches no model.
+5. After a new grant, or after `rotate`, every request with an older driver token is rejected; after a new grant, the older model credentials reach no model.
 6. A second agent host in the same sandbox cannot open agent storage.
 7. A second control-plane process cannot act while the first holds the lock.
-8. Provider keys and repository credentials never appear in a sandbox; on E2B Embed the agent reaches providers only through the LLM gateway, and a revoked model key stops it at once.
+8. Repository credentials never appear in a sandbox, and revoking a grant's model credentials stops its agent from calling a model at once.
 9. On E2B Embed, a sandbox cannot reach any private address other than the LLM gateway.
 10. Every completed tool call produces a snapshot within `backup.snapshot_interval`.
 11. A workspace does not sleep while its backup is behind; a sleeping workspace's transcript is readable without waking it.
@@ -352,5 +350,5 @@ A release passes every scenario on E2B Cloud and on E2B Embed.
 17. A Kit requiring an unsupported capability is rejected before any sandbox exists.
 18. An in-place upgrade lets running runs finish and redoes nothing.
 19. A control plane killed after creating a sandbox and before issuing its grant leaves no extra sandbox once the workspace is `active`.
-20. A model key whose grant ended while the LLM gateway was down is revoked once the gateway is back.
+20. Model credentials whose grant ended while the `SecretProvider` was unavailable are revoked once it is back.
 21. A tenant's repository restored with the kopia CLI alone yields the workspace's files at a snapshot.

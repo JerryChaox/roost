@@ -13,10 +13,9 @@ You give every user an agent, and every agent a sandbox. Then production happens
 - **Sandboxes die.** They time out, get paused, crash. The agent's files and context go with them.
 - **Processes die mid-task.** The work is lost, or redone from the start.
 - **Two copies run at once.** A retry, a stale instance or a restored sandbox, and two agents write the same state.
-- **Keys leak.** An agent that runs generated code next to a model key can be talked into sending it out.
 - **Runs can't be reproduced.** Debugging a run, or branching it a hundred times for evaluation, needs the exact workspace at the exact step.
 
-[Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable) makes one agent durable: every model call and tool call is committed before it is shown, and a crashed run continues from its last step. roost is the agent layer that runs it for all your users, on top of a sandbox platform: one sandbox per workspace on E2B, exactly one agent per workspace whatever fails, continuous backups you can restore or branch from any step, and provider keys that never enter a sandbox.
+[Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable) makes one agent durable: every model call and tool call is committed before it is shown, and a crashed run continues from its last step. roost is the agent layer that runs it for all your users, on top of a sandbox platform: one sandbox per workspace on E2B, exactly one agent per workspace whatever fails, and continuous backups you can restore or branch from any step.
 
 ## How it works
 
@@ -39,7 +38,6 @@ Each level makes its own promise:
 | Execution | Gives each workspace one execution grant and one agent process | Exactly one agent per workspace, through crashes, reboots, restores and failover. |
 | Agent | Runs Pi Durable in the sandbox | Every step is committed first. A crashed run continues from its last step. |
 | Backup | Captures every change and stores it outside the sandbox, deduplicated | Restore or branch a workspace from any step, on any machine. |
-| Credentials | Mints a model key per grant at your LLM gateway, or uses E2B's egress proxy | Provider keys never enter a sandbox. One command cuts an agent off. |
 
 Isolation is by tenant: data, backups and credentials never cross a tenant. A workspace's sandbox is its trust boundary.
 
@@ -99,7 +97,7 @@ Inside every sandbox:
 - **`roost-driver`** gates every request, keeps exactly one agent running and captures changes at low priority.
 - **`roost-agent-pi`** runs Pi Durable with Pi's prompts, tools and skills.
 
-Nothing in a sandbox calls roost, so roost needs no public address. Agents reach models through an LLM gateway such as LiteLLM, with a key roost mints per grant and revokes at will, or through E2B Cloud's egress proxy.
+Nothing in a sandbox calls roost, so roost needs no public address. The agent's model credentials come from a `SecretProvider`, such as an LLM gateway issuing a short-lived key per grant, or E2B Cloud's egress proxy.
 
 ## What roost is not
 
@@ -120,7 +118,7 @@ kubectl apply -k              # KVM nodes in your Kubernetes cluster
 ## Design
 
 - [RFC 0001: a durable agent runtime built on Pi Durable](docs/rfcs/0001-durable-agent-runtime.md): the principles, the model, where state lives, and why.
-- [Contracts](docs/specs/contracts.md): the APIs, invariants, backups, credentials, Kit support and conformance scenarios.
+- [Contracts](docs/specs/contracts.md): the APIs, invariants, backups, model credentials, Kit support and conformance scenarios.
 - [Sandbox protocols](docs/specs/driver-protocol.md): the execution grant, the driver, the conversation interface and backup capture.
 
 ## License
