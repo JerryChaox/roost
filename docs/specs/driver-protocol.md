@@ -19,12 +19,12 @@ The control plane and the backup service always call the driver; nothing in the 
 
 ## 1. Execution grant
 
-A workspace has at most one live **execution grant**: `{ workspace, sandbox, start, driver token, backup token, model key }`, identified by its `start`. The control plane issues it as a row of its database, ending the previous grant in the same transaction, and routes every request for the workspace to the driver that holds it.
+A workspace has at most one live **execution grant**: `{ workspace, sandbox, start, driver token, backup token, model credentials }`, identified by its `start`. The control plane issues it as a row of its database, ending the previous grant in the same transaction, and routes every request for the workspace to the driver that holds it.
 
 - The control plane issues a new grant whenever it starts a driver: when the sandbox is created, rebooted, restored or forked, when an upgrade replaces the driver, and when the driver stops answering while the sandbox is reachable.
 - A new control-plane process rotates the driver token of each grant it takes over (section 3, `rotate`), so requests from an earlier process lose effect without restarting anything.
-- The driver accepts only the current grant's tokens: the driver token, used by the control plane, on every route; the backup token, used by the backup service, only on `/v1/backup/*`, `/v1/restore` and `/v1/state`. Everything else gets `401 unauthorized`. The model key is minted for the grant at the LLM gateway and revoked when the grant ends, so an older key reaches no model.
-- The tokens exist only in roost's database, in the memory of the process that uses them and in the driver's memory; the model key only at the LLM gateway and in the agent host's memory. None of them is written to the sandbox's disk.
+- The driver accepts only the current grant's tokens: the driver token, used by the control plane, on every route; the backup token, used by the backup service, only on `/v1/backup/*`, `/v1/restore` and `/v1/state`. Everything else gets `401 unauthorized`. The model credentials are issued for the grant by the `SecretProvider` and revoked when the grant ends, so an older grant's credentials reach no model.
+- The tokens exist only in roost's database, in the memory of the process that uses them and in the driver's memory; the model credential only with its `SecretProvider` and in the agent host's memory. None of them is written to the sandbox's disk.
 
 ## 2. Starting the driver
 
@@ -87,7 +87,7 @@ JSON-RPC 2.0 over the agent host's stdin and stdout, one message per line. Only 
 | driver → host | `state` / `shutdown` | Runs, queues and last progress / stop after flushing |
 | host → driver | `snapshot` (notification) | A step finished: `{ "conversation": "c_...", "run": "run_...", "position": "<agent storage position>" }`; the driver takes a snapshot |
 
-Model credentials reach the host here, not through its environment. The host calls models directly: the LLM gateway with the grant's model key on E2B Embed, or the providers with a placeholder key on E2B Cloud, where E2B's egress proxy injects the real one.
+Model credentials reach the host here, not through its environment. The host calls the model endpoints it is given directly, with the grant's credential.
 
 ## 6. Backup capture and restore
 
@@ -119,5 +119,5 @@ Errors are JSON: `{ "error": "<code>", "detail": "..." }`.
 
 - The sandbox is the workspace's trust boundary. The driver runs as root; the agent host and the tools it runs share the agent's user, as in any coding agent.
 - The driver token, the lock and the backup capture belong to the root-owned driver and are out of the agent's reach.
-- Code the agent runs can read the model key and change the agent's own storage. Neither reaches beyond the workspace, and the model key can be revoked at any time. Confining the agent's tools is planned work ([RFC 0001, last section](../rfcs/0001-durable-agent-runtime.md#later-confinement-and-environment-capture)).
+- Code the agent runs can read the model credential and change the agent's own storage. Neither reaches beyond the workspace, and the credential can be revoked when its `SecretProvider` supports it. Confining the agent's tools is planned work ([RFC 0001, last section](../rfcs/0001-durable-agent-runtime.md#later-confinement-and-environment-capture)).
 - A sandbox created from a snapshot starts from the template; nothing from the source's processes runs in it.

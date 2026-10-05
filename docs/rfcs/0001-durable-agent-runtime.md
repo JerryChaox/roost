@@ -8,7 +8,7 @@
 
 ## Summary
 
-roost runs durable agents for many users at once. The agent loop is [Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable): it calls the model, runs tools, and commits every step before showing it. roost is the agent layer on top of a sandbox platform: it gives each workspace one long-lived sandbox on E2B and runs Pi inside it. Around it, roost guarantees that exactly one agent loop owns a workspace at any moment, backs the workspace up continuously so it can be restored or branched from any step, keeps provider keys out of the sandbox, and makes the whole system operable.
+roost runs durable agents for many users at once. The agent loop is [Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable): it calls the model, runs tools, and commits every step before showing it. roost is the agent layer on top of a sandbox platform: it gives each workspace one long-lived sandbox on E2B and runs Pi inside it. Around it, roost guarantees that exactly one agent loop owns a workspace at any moment, backs the workspace up continuously so it can be restored or branched from any step, and makes the whole system operable.
 
 This RFC explains the principles, the model, where state lives, and why. The normative interfaces are in the contracts and the sandbox protocols.
 
@@ -19,7 +19,6 @@ Teams that run agents for their users hit the same failures:
 - **Sandboxes die.** They time out, get paused or crash, and the agent's files and context go with them.
 - **Processes die mid-task.** The work is lost, or redone from the start.
 - **Two copies run at once.** A retried request, a stale instance or a restored sandbox ends up with two agents writing the same state.
-- **Credentials leak.** An agent that runs generated code next to a model key can be talked into sending it out.
 - **Environments can't be reproduced.** Debugging a run, or branching it many times for evaluation or reinforcement learning, needs the exact workspace at an exact step.
 
 Enterprises add three requirements: tenants must be isolated, the data must stay in storage they control, and the whole system must be operable, by people and by agents.
@@ -49,7 +48,7 @@ roost never schedules sandboxes, builds a hypervisor or proxies model traffic. I
 2. Keep exactly one agent loop per workspace, across restarts, reboots, restores and control-plane failover.
 3. Survive process crashes, stuck sandboxes and host restarts without losing finished steps.
 4. Back every workspace up as it runs, and restore or branch it from any step, on any deployment.
-5. Isolate tenants completely, and keep provider keys and repository credentials out of every sandbox.
+5. Isolate tenants completely.
 6. Be operable end to end from a CLI that an agent can use.
 
 ## Non-goals
@@ -83,7 +82,6 @@ tenant                      isolation boundary: nothing crosses it
 | Execution | Issues execution grants, starts and supervises drivers, rotates and revokes tokens | One agent loop per workspace, whatever fails. |
 | Agent | Runs Pi Durable in the sandbox | Every step is committed before it is shown; a crashed run continues from its last step; a message is admitted once. |
 | Backup | Captures changes in the sandbox, stores them outside as content-addressed snapshots | Restore or branch any workspace from any step, on any deployment. |
-| Credentials | Mints a model key per grant at an LLM gateway, or relies on E2B's egress proxy | Provider keys never enter a sandbox. One revocation stops a workspace's agent. |
 | Infrastructure | E2B Cloud or E2B Embed; SQLite or Postgres; a persistent disk or object storage for the repository | The same API on both. |
 
 ## State
@@ -95,26 +93,26 @@ tenant                      isolation boundary: nothing crosses it
 | Workspaces and their phases, execution grants, audit | roost's database |
 | Snapshots | The tenant's kopia repository |
 | Sandboxes, running or paused; templates | E2B |
-| Tenants, provider keys and repository passwords (secret references), Kits, policies | `roost.yaml` |
+| Tenants, `SecretProvider` settings and repository passwords (secret references), Kits, policies | `roost.yaml` |
 
 Snapshots and the read-only projection are copies of past states. A restore starts a new sandbox from one; the live state always has one owner.
 
 roost's database holds only what roost decides, in three tables:
 
 - **`workspaces`**: what each workspace is (name, owner, runtime configuration, `forked_from`) and where roost has taken it, its phase: `provisioning`, `active`, `restoring` or `failed`. A restore is a phase of the workspace, not a separate record; a fork is new workspaces `provisioning` from a snapshot.
-- **`grants`**: one row per execution grant, live or ended, with the reason it ended and whether its model key is revoked.
+- **`grants`**: one row per execution grant, live or ended, with the reason it ended and whether its model credentials are revoked.
 - **`audit`**: who asked for what, and how each restore ended.
 
 Two things share a table only if they are one-to-one at every moment, change in the same transitions and have the same writer. No table records work to be done: roost reconciles these rows with what E2B and the drivers report, and repeats an idempotent step until they agree. A crash only means the step runs again.
 
 ## Execution grant
 
-A workspace has at most one live grant: `{ workspace, sandbox, start, driver token, backup token, model key }`.
+A workspace has at most one live grant: `{ workspace, sandbox, start, driver token, backup token, model credentials }`.
 
 - **Issued** as a row of the `grants` table whenever the control plane starts a driver: on creation, reboot, restore, fork, upgrade, or when the driver stops answering. Issuing ends the previous grant in the same transaction, and a partial unique index allows one live grant per workspace.
-- **Checked** by the driver for every request (the driver token from the control plane, the backup token from `roost backup`, which reaches only backup, restore and state) and by the LLM gateway for every model call (model key). Older tokens are rejected and older model keys are revoked; a revocation is retried until the gateway confirms it.
+- **Checked** by the driver for every request (the driver token from the control plane, the backup token from `roost backup`, which reaches only backup, restore and state) Older tokens are rejected, and the model credentials of every ended grant are revoked; a revocation is retried until it is confirmed.
 - **Rotated** in place when a new control-plane process takes over: the driver token changes, so requests from the earlier process lose effect without a restart.
-- **Ended** before a restore replaces the sandbox: the model key is revoked at the LLM gateway, so an agent loop left in the old sandbox cannot call a model.
+- **Ended** before a restore replaces the sandbox: its model credentials are revoked, so an agent loop left in the old sandbox cannot call a model.
 
 Inside the sandbox, the driver locks the agent's storage and supervises exactly one agent host, so the grant maps to exactly one process. The path of every request is tenant → workspace → grant → driver → agent host → conversation. Requests reach a workspace only while it is `active`.
 
@@ -151,12 +149,12 @@ A snapshot is the template, the runtime configuration, the workspace's file tree
 
 ## Model credentials
 
-roost does not proxy model traffic; model access is a cluster service.
+roost does not proxy model traffic; model access is a cluster service. roost reaches it through one interface, the **`SecretProvider`**:
 
-- **E2B Embed** has no TLS interception, so the agent calls an **LLM gateway** with virtual keys, such as LiteLLM or Envoy AI Gateway. roost holds only the gateway's admin credential. It mints a virtual key for each grant, scoped to the workspace and the tenant, and revokes it when the grant ends. Provider keys, usage per tenant and budgets live in the gateway.
-- **E2B Cloud** injects keys in its egress proxy; the agent uses a placeholder, and revoking removes the injection from the sandbox's network configuration.
+- **Issue**: when a grant is issued, roost asks the `SecretProvider` for the agent's model endpoints and credential, and hands them to the agent host over the control channel.
+- **Revoke**: when the grant ends (a new grant, a restore, `ws revoke`), roost asks the `SecretProvider` to revoke them, and retries until it confirms. This is fencing: an agent left in an old sandbox cannot call a model.
+- **What stands behind it** belongs to the deployment: an LLM gateway that issues a short-lived key per grant, such as LiteLLM, or E2B Cloud's egress proxy, which injects the key into the agent's requests.
 - **Reaching the gateway on Embed**: E2B blocks private addresses from sandboxes unless the orchestrator node exempts them. The gateway therefore has a fixed address that every sandbox may reach and that Embed exempts as a `/32`; roost's manifests deploy LiteLLM this way and `roost doctor` checks it.
-- Code the agent runs can read the model key; it works only for one workspace and one grant and can be revoked at once.
 
 ## Sandboxes
 
@@ -166,14 +164,14 @@ What a sandbox contains and may do is declared with the [Docker Sandbox Kit Spec
 
 ## Code and processes
 
-Everything roost does outside the sandbox is one Go library, **`roost-core`**: execution grants, the workspace lifecycle, routing to the current grant, snapshots, restore and fork, model keys, the sandbox provider, the backup pipeline, and the reconcilers. It speaks no network protocol of its own. Two processes run it:
+Everything roost does outside the sandbox is one Go library, **`roost-core`**: execution grants, the workspace lifecycle, routing to the current grant, snapshots, restore and fork, model credentials through the `SecretProvider`, the sandbox provider, the backup pipeline, and the reconcilers. It speaks no network protocol of its own. Two processes run it:
 
-- **`roost serve`** is the control plane: `roost-core` behind one HTTP API, for applications and operators alike. It authenticates, calls `roost-core` and runs the reconcilers that create sandboxes, issue grants, watch runs, revoke model keys and put workspaces to sleep. One process acts at a time, holding a lock in the database (SQLite by default, Postgres for more).
+- **`roost serve`** is the control plane: `roost-core` behind one HTTP API, for applications and operators alike. It authenticates, calls `roost-core` and runs the reconcilers that create sandboxes, issue grants, watch runs, revoke model credentials and put workspaces to sleep. One process acts at a time, holding a lock in the database (SQLite by default, Postgres for more).
 - **`roost backup`** runs kopia: it pulls change streams, writes the repositories, pushes snapshots into restored and forked sandboxes, and answers `roost serve`'s reads of snapshot listings and the read-only projection, which it serves by running the agent host read-only on a snapshot's agent storage. The repositories have one holder.
 
 Both, and the CLI, are one `roost` binary. In every sandbox run **`roost-driver`** and **`roost-agent-pi`**; when a release changes them, sandboxes get them in place at their next quiet moment.
 
-The HTTP API is the public contract; the Go API of `roost-core` is not yet stable. `roost serve` and `roost backup` reach the driver through E2B's endpoint, so roost needs no public address. Model access uses an LLM gateway deployed beside roost.
+The HTTP API is the public contract; the Go API of `roost-core` is not yet stable. `roost serve` and `roost backup` reach the driver through E2B's endpoint, so roost needs no public address.
 
 ## Operations
 
@@ -193,10 +191,10 @@ In single-machine setups roost uses SQLite on the data disk and adds no database
 ## Security
 
 - **Tenants** are the hard boundary: workspaces, snapshots, chunks and credentials never cross them.
-- **The sandbox** is the trust boundary of a workspace. Inside it, the agent's code can read the model key and change the agent's storage; both stay within the workspace.
-- **Secrets** stay out of the agent's reach: provider keys in the LLM gateway or E2B's proxy, repository credentials in `roost backup`, the driver token in the root-owned driver.
+- **The sandbox** is the trust boundary of a workspace. Inside it, the agent's code can read the model credential and change the agent's storage; both stay within the workspace.
+- **Secrets** stay out of the agent's reach: repository credentials in `roost backup`, the driver token in the root-owned driver.
 - **Egress** is limited to the Kit's destinations, and to the LLM gateway among private addresses.
-- **Fencing**: one grant per workspace, new tokens and a new model key per grant, rotation on failover and revocation on restore.
+- **Fencing**: one grant per workspace, new tokens and new model credentials per grant, rotation on failover and revocation on restore.
 
 ## Alternatives considered
 
@@ -218,11 +216,8 @@ In single-machine setups roost uses SQLite on the data disk and adds no database
 | A table of operations for restores and forks | Rejected | A restore is a phase of its workspace and a fork is new workspaces; a separate record would hold the same fact twice |
 | Back up the root filesystem | Rejected | The template rebuilds it; restoring system directories into a running machine is fragile |
 | Provider volumes or a network file system for workspaces | Rejected | E2B volumes are an NFS beta disabled in Embed; JuiceFS measured 6 to 11 s for `git status` and 64 to 141 s for `npm ci` |
-| Model keys in the sandbox's environment | Rejected | Any tool the agent runs could send them out |
-| A model gateway of roost's own | Rejected | LLM gateways with virtual keys, usage and budgets already exist; roost only mints and revokes keys |
-| A generic egress proxy injecting model keys | Rejected | Behind Embed's NAT it cannot tell sandboxes apart, so it cannot scope or revoke per workspace; it also needs TLS interception and a CA in every template |
 | roost as a library only, embedded in the application's backend | Rejected | Only Go backends could use it; the loops that keep one live agent per workspace need a long-running process, which a serverless or scaled-to-zero backend is not; E2B and gateway credentials would spread into every caller |
-| A Docker backend | Rejected | It has neither credential injection nor microVM isolation |
+| A Docker backend | Rejected | It has no microVM isolation |
 | Channel adapters | Out of scope | Built on the conversation API by the integrator |
 
 ## Roadmap
