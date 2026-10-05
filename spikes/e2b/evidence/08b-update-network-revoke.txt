@@ -1,0 +1,32 @@
+[+  0.711s] <<< 200 OK (711ms) POST /process.Process/Start
+  [ 0.711s] start pid=1734
+RESULT exec bg-started pid=1734 (closing stream)
+PUT start ms: 1791127806585
+[+  0.000s] >>> PUT https://api.e2b.app/sandboxes/id0a6t911u2kxlo5oo7iz/network
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"allowOut":["httpbin.org","postman-echo.com","example.com"],"denyOut":["0.0.0.0/0"]}
+[+  0.769s] <<< 204 No Content (769ms) PUT /sandboxes/id0a6t911u2kxlo5oo7iz/network
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+RESULT network status=204 elapsed=769ms
+PUT done ms: 1791127807411
+[+  0.673s] <<< 200 OK (673ms) POST /process.Process/Start
+  [ 0.673s] start pid=1969
+  [ 0.680s] stdout|       9 1791127803676 "X-Api-Key": "dummy-injected-key-AAAA"
+  [ 0.680s] stdout|      30 1791127808601 "X-Api-Key": "placeholder"
+  [ 0.680s] stdout| 
+  [ 0.681s] stdout| transition at 1791127803676 -> "dummy-injected-key-AAAA"
+  [ 0.681s] stdout| transition at 1791127808601 -> "placeholder"
+  [ 0.684s] stdout| example.com now:
+  [ 0.817s] stdout| http=200
+  [ 0.817s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=817ms
+[+  0.000s] >>> GET https://api.e2b.app/sandboxes/id0a6t911u2kxlo5oo7iz
+    X-Api-Key: <redacted len=44>
+[+  0.690s] <<< 200 OK (690ms) GET /sandboxes/id0a6t911u2kxlo5oo7iz
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","cpuCount":1,"diskSizeMB":11798,"endAt":"2026-10-04T15:44:30.765869322Z","envdAccessToken":"<redacted len=64>","envdVersion":"0.9.0","lifecycle":{"autoResume":true,"onTimeout":"pause"},"memoryMB":512,"metadata":{"roost.spike":"1","roost.tenant":"acme","roost.workspace":"ws-q9"},"network":{"allowOut":["httpbin.org","postman-echo.com","example.com"],"allowPublicTraffic":false,"denyOut":["0.0.0.0/0"]},"sandboxID":"id0a6t911u2kxlo5oo7iz","startedAt":"2026-10-04T15:29:30.765869322Z","state":"running","templateID":"uh60ctbk06f4mrwuv6d6","volumeMounts":[]}
+RESULT get state=running endAt=2026-10-04T15:44:30Z

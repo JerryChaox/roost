@@ -1,0 +1,13 @@
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: roost.spike/e2b/internal/envd
+plugins:
+  - local: [go, tool, protoc-gen-go]
+    out: internal/envd
+    opt: paths=source_relative
+  - local: [go, tool, protoc-gen-connect-go]
+    out: internal/envd
+    opt: paths=source_relative

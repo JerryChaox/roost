@@ -1,0 +1,76 @@
+### start a second process with the same tag
+[+  0.000s] >>> POST https://49983-id0a6t911u2kxlo5oo7iz.e2b.app/process.Process/Start
+    Accept-Encoding: identity
+    Authorization: Basic cm9vdDo=   (= base64("root:"))
+    Connect-Accept-Encoding: gzip
+    Connect-Protocol-Version: 1
+    Content-Type: application/connect+json
+    Keepalive-Ping-Interval: 50
+    X-Access-Token: <redacted len=64>
+    body (connect envelope, flags=0): {"process":{"cmd":"/usr/local/bin/node", "args":["/opt/roost/fake-driver.js"], "envs":{"PORT":"8081"}}, "tag":"roost-driver"}
+[+  0.789s] <<< 200 OK (789ms) POST /process.Process/Start
+    Content-Type: application/connect+json
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    Connect-Content-Encoding: gzip
+  [ 0.789s] start pid=1992
+RESULT exec bg-started pid=1992 (closing stream)
+### start a child-spawning process (agent host stand-in, not envd-tracked child)
+[+  0.686s] <<< 200 OK (686ms) POST /process.Process/Start
+  [ 0.686s] start pid=1999
+RESULT exec bg-started pid=1999 (closing stream)
+[+  0.706s] <<< 200 OK (706ms) POST /process.Process/List
+  pid=351 tag="" cmd="/bin/bash" args=["-l" "-c" "PORT=9000 node /opt/roost/fake-driver.js"] envs(returned by List, values elided)=[NODE_VERSION=<len 7> PATH=<len 121> YARN_VERSION=<len 7>]
+  pid=1999 tag="roost-agent-parent" cmd="/bin/bash" args=["-c" "sleep 100000 & PORT=8090 exec node /opt/roost/fake-driver.js"] envs(returned by List, values elided)=[]
+  pid=1727 tag="roost-driver" cmd="/usr/local/bin/node" args=["/opt/roost/fake-driver.js"] envs(returned by List, values elided)=[PORT=<len 4>]
+  pid=1992 tag="roost-driver" cmd="/usr/local/bin/node" args=["/opt/roost/fake-driver.js"] envs(returned by List, values elided)=[PORT=<len 4>]
+RESULT ps count=4
+### SIGTERM by tag roost-driver
+[+  0.000s] >>> POST https://49983-id0a6t911u2kxlo5oo7iz.e2b.app/process.Process/SendSignal
+    Accept-Encoding: gzip
+    Connect-Protocol-Version: 1
+    Content-Type: application/json
+    X-Access-Token: <redacted len=64>
+    body: {"process":{"tag":"roost-driver"}, "signal":"SIGNAL_SIGTERM"}
+[+  0.685s] <<< 404 Not Found (685ms) POST /process.Process/SendSignal
+    Content-Type: application/json
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"code":"not_found","message":"process with tag roost-driver not found"}
+RESULT signal error=not_found: process with tag roost-driver not found
+[+  0.659s] <<< 200 OK (658ms) POST /process.Process/List
+  pid=351 tag="" cmd="/bin/bash" args=["-l" "-c" "PORT=9000 node /opt/roost/fake-driver.js"] envs(returned by List, values elided)=[NODE_VERSION=<len 7> PATH=<len 121> YARN_VERSION=<len 7>]
+  pid=1999 tag="roost-agent-parent" cmd="/bin/bash" args=["-c" "sleep 100000 & PORT=8090 exec node /opt/roost/fake-driver.js"] envs(returned by List, values elided)=[]
+  pid=1727 tag="roost-driver" cmd="/usr/local/bin/node" args=["/opt/roost/fake-driver.js"] envs(returned by List, values elided)=[PORT=<len 4>]
+  pid=1992 tag="roost-driver" cmd="/usr/local/bin/node" args=["/opt/roost/fake-driver.js"] envs(returned by List, values elided)=[PORT=<len 4>]
+RESULT ps count=4
+[+  0.733s] <<< 200 OK (733ms) POST /process.Process/Start
+  [ 0.733s] start pid=2007
+  [ 0.800s] stdout| 351 node /opt/roost/fake-driver.js
+  [ 0.800s] stdout| 1727 /usr/local/bin/node /opt/roost/fake-driver.js
+  [ 0.800s] stdout| 1992 /usr/local/bin/node /opt/roost/fake-driver.js
+  [ 0.800s] stdout| 1999 node /opt/roost/fake-driver.js
+  [ 0.800s] stdout| 2000 sleep 100000
+  [ 0.801s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=801ms
+### SIGKILL by unknown tag
+[+  0.000s] >>> POST https://49983-id0a6t911u2kxlo5oo7iz.e2b.app/process.Process/SendSignal
+    Accept-Encoding: gzip
+    Connect-Protocol-Version: 1
+    Content-Type: application/json
+    X-Access-Token: <redacted len=64>
+    body: {"process":{"tag":"no-such-tag"}, "signal":"SIGNAL_SIGKILL"}
+[+  0.672s] <<< 404 Not Found (672ms) POST /process.Process/SendSignal
+    Content-Type: application/json
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"code":"not_found","message":"process with tag no-such-tag not found"}
+RESULT signal error=not_found: process with tag no-such-tag not found
+### kill everything matching by name via Exec (covers non-envd processes)
+[+  0.679s] <<< 200 OK (679ms) POST /process.Process/Start
+  [ 0.679s] start pid=2008
+  [ 0.710s] end exit=-1 exited=false status="signal: killed" err="signal: killed"
+RESULT exec exit=-1 elapsed=710ms
+[+  0.679s] <<< 200 OK (679ms) POST /process.Process/List
+  pid=1999 tag="roost-agent-parent" cmd="/bin/bash" args=["-c" "sleep 100000 & PORT=8090 exec node /opt/roost/fake-driver.js"] envs(returned by List, values elided)=[]
+RESULT ps count=1

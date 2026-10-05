@@ -1,0 +1,17 @@
+[+  0.000s] >>> GET https://8080-igp6ksg7ri0xb8938kmel.e2b.app/sse?n=9&every=15000
+[+  0.686s] <<< 200 OK (686ms) GET /sse
+    Content-Type: text/event-stream
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+  [recv +  0.686s @1791127701717] data: {"i":0,"sentAt":1791127702440}
+  [recv +  0.686s @1791127701717] 
+  [recv + 15.688s @1791127716719] data: {"i":1,"sentAt":1791127717442}
+  [recv + 15.689s @1791127716719] 
+  [recv + 30.689s @1791127731719] data: {"i":2,"sentAt":1791127732443}
+  [recv + 30.689s @1791127731719] 
+  [recv + 45.690s @1791127746720] data: {"i":3,"sentAt":1791127747443}
+  [recv + 45.690s @1791127746720] 
+  [recv + 60.740s @1791127761769] data: {"i":4,"sentAt":1791127762444}
+  [recv + 60.740s @1791127761769] 
+  [recv + 75.691s @1791127776721] data: {"i":5,"sentAt":1791127777446}
+  [recv + 75.692s @1791127776721] 

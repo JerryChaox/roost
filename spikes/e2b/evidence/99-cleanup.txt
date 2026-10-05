@@ -1,0 +1,62 @@
+### kill running sandbox
+[+  0.000s] >>> DELETE https://api.e2b.app/sandboxes/igp6ksg7ri0xb8938kmel
+    X-Api-Key: <redacted len=44>
+[+  0.818s] <<< 204 No Content (818ms) DELETE /sandboxes/igp6ksg7ri0xb8938kmel
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+RESULT kill igp6ksg7ri0xb8938kmel status=204 elapsed=818ms
+[+  0.705s] <<< 200 OK (705ms) GET /v2/sandboxes
+RESULT poll-list id=igp6ksg7ri0xb8938kmel state=absent reached after 705ms (1 polls)
+### kill paused sandbox
+[+  0.000s] >>> DELETE https://api.e2b.app/sandboxes/id0a6t911u2kxlo5oo7iz
+    X-Api-Key: <redacted len=44>
+[+  0.723s] <<< 204 No Content (723ms) DELETE /sandboxes/id0a6t911u2kxlo5oo7iz
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+RESULT kill id0a6t911u2kxlo5oo7iz status=204 elapsed=723ms
+[+  0.692s] <<< 200 OK (692ms) GET /v2/sandboxes
+RESULT poll-list id=id0a6t911u2kxlo5oo7iz state=absent reached after 692ms (1 polls)
+### delete spike template
+[+  0.000s] >>> DELETE https://api.e2b.app/templates/uh60ctbk06f4mrwuv6d6
+    X-Api-Key: <redacted len=44>
+[+  0.697s] <<< 204 No Content (697ms) DELETE /templates/uh60ctbk06f4mrwuv6d6
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+RESULT template-delete status=204
+### VERIFY: sandboxes labelled roost.spike=1 (running+paused)
+[+  0.000s] >>> GET https://api.e2b.app/v2/sandboxes?metadata=roost.spike%3D1&state=running,paused
+    X-Api-Key: <redacted len=44>
+[+  0.655s] <<< 200 OK (655ms) GET /v2/sandboxes
+    Content-Type: application/json; charset=utf-8
+    X-Total-Running: 0
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: []
+RESULT list count=0
+### VERIFY: all sandboxes on the account (running+paused)
+[+  0.000s] >>> GET https://api.e2b.app/v2/sandboxes?state=running,paused&limit=100
+    X-Api-Key: <redacted len=44>
+[+  0.664s] <<< 200 OK (664ms) GET /v2/sandboxes
+    Content-Type: application/json; charset=utf-8
+    X-Total-Running: 0
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: []
+RESULT list count=0
+### VERIFY: templates
+[+  0.000s] >>> GET https://api.e2b.app/templates
+    X-Api-Key: <redacted len=44>
+[+  0.690s] <<< 200 OK (690ms) GET /templates
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: []
+RESULT templates count=0
+[+  0.000s] >>> GET https://api.e2b.app/templates/aliases/roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217
+    X-Api-Key: <redacted len=44>
+[+  0.670s] <<< 404 Not Found (670ms) GET /templates/aliases/roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"code":404,"message":"template 'roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217' not found"}
+RESULT alias status=404 elapsed=670ms

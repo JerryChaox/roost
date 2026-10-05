@@ -1,107 +1,128 @@
-# roost
+<h1 align="center">roost</h1>
 
-Durable, exactly-once agent sessions on disposable sandboxes.
-
-A session is a migratory bird: it can perch anywhere and stay itself. The sandbox
-is just tonight's roost — destroy it, replace it, upgrade it, and the session
-lives on.
+<p align="center">
+  <b>Durable agents for every user, built on Pi Durable.</b><br>
+  Every workspace is backed up as it runs: restore or branch it from any step.<br>
+  Build all your enterprise agents on one stack.
+</p>
 
 ## Why
 
-E2B, Modal and friends solve "give me a sandbox". They don't solve what a
-message-triggered agent actually needs from one:
+You give every user an agent, and every agent a sandbox. Then production happens.
 
-- Your queue delivers at-least-once, so the same message will eventually arrive
-  twice — and an agent that answers twice is broken in a way users notice.
-- Sandboxes die, get paused, get garbage-collected. The conversation must not.
-- You will ship a new runtime version while conversations are in flight, and
-  "please start a new chat" is not an upgrade strategy.
-- Sometimes the agent process inside just hangs, and something has to notice,
-  kill it, and get the turn answered anyway.
+- **Sandboxes die.** They time out, get paused, crash. The agent's files and context go with them.
+- **Processes die mid-task.** The work is lost, or redone from the start.
+- **Two copies run at once.** A retry, a stale instance or a restored sandbox, and two agents write the same state.
+- **Keys leak.** An agent that runs generated code next to a model key can be talked into sending it out.
+- **Runs can't be reproduced.** Debugging a run, or branching it a hundred times for evaluation, needs the exact workspace at the exact step.
 
-roost is that layer. It sits between your delivery queue and your sandbox
-provider, and holds three invariants:
+[Pi Durable](https://github.com/earendil-works/pi/tree/main/packages/durable) makes one agent durable: every model call and tool call is committed before it is shown, and a crashed run continues from its last step. roost is the agent layer that runs it for all your users, on top of a sandbox platform: one sandbox per workspace on E2B, exactly one agent per workspace whatever fails, continuous backups you can restore or branch from any step, and provider keys that never enter a sandbox.
 
-| Invariant | Meaning | Proof |
+## How it works
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/architecture-dark.svg">
+  <img src="assets/architecture-light.svg" width="100%" alt="A tenant contains workspaces; a workspace holds several conversations and one long-lived sandbox whose disk keeps the shared files and Pi's storage; each conversation has an inbox and runs one run at a time. Each level lists its guarantees and operator commands.">
+</picture>
+
+You only need three words:
+
+- **Workspace**: the agent's computer, one long-lived sandbox with its files and Pi's storage, backed up as it runs. Its name is yours to choose, often one per user.
+- **Conversation**: a Pi conversation inside a workspace, with its own transcript and inbox. Conversations in one workspace see the same files.
+- **Run**: one run of the agent, from a message to its final answer.
+
+Each level makes its own promise:
+
+| Level | What roost does | What you can rely on |
 |---|---|---|
-| **Exactly-once** | At-least-once delivery in, exactly one execution out. Deterministic turn ids, a CAS turn ledger on the host, and an idempotent turn registry inside the sandbox — re-runs are only ever legal on a fresh sandbox after an explicit requeue. | `cli_chat.py --duplicate` |
-| **Durability** | The sandbox is a cache; the workspace snapshot is the truth. Kill the container mid-conversation and the next message rebuilds it, state intact. | `cli_chat.py --counter` + `/kill` |
-| **Never worse off** | A stalled sandbox is detected, killed, and the turn re-answered on a fresh one. A runtime upgrade replaces the sandbox under the conversation via live snapshot and atomic rebind — and if the upgrade fails at any step, the old sandbox keeps answering as if nothing happened. | `cli_chat.py --hang-first`; forced-update e2e tests |
+| API | Authenticates and routes every request to the workspace's agent | A message is admitted once. Sleeping workspaces stay readable. |
+| Execution | Gives each workspace one execution grant and one agent process | Exactly one agent per workspace, through crashes, reboots, restores and failover. |
+| Agent | Runs Pi Durable in the sandbox | Every step is committed first. A crashed run continues from its last step. |
+| Backup | Captures every change and stores it outside the sandbox, deduplicated | Restore or branch a workspace from any step, on any machine. |
+| Credentials | Mints a model key per grant at your LLM gateway, or uses E2B's egress proxy | Provider keys never enter a sandbox. One command cuts an agent off. |
 
-Everything above runs against a real local Docker daemon in this repo's test
-suite (200+ tests, CI on every push).
+Isolation is by tenant: data, backups and credentials never cross a tenant. A workspace's sandbox is its trust boundary.
 
-## Try it
+## Talking to agents
 
-Requires Python ≥ 3.11 and a running Docker daemon. The core library has zero
-runtime dependencies.
+Your backend talks to conversations over HTTP. A chat bot can use its thread id as the `key`, so it never stores a conversation id:
 
 ```bash
-git clone https://github.com/JerryChaox/roost && cd roost
-python -m venv .venv && .venv/bin/pip install -e .
+# a workspace per user, a conversation per thread
+curl -X PUT localhost:7070/v1/workspaces/user-42 -H "Authorization: Bearer $ROOST_KEY"
+# ready once GET /v1/workspaces/user-42 shows "phase": "active"
+curl -X POST localhost:7070/v1/workspaces/user-42/conversations -H "Authorization: Bearer $ROOST_KEY" \
+  -d '{"key": "slack:C123:1712.0000"}'
+# {"conversation": "c_01J9Z..."}
 
-# Demo 1 — exactly-once: every message is delivered twice, answered once.
-.venv/bin/python examples/cli_chat.py --duplicate
-
-# Demo 2 — durability: the counter survives you destroying the sandbox.
-.venv/bin/python examples/cli_chat.py --counter --snapshot-dir /tmp/roost-snap
-#   you> tick            →  agent> tick counter=1
-#   you> /kill           →  docker rm -f <sandbox>
-#   you> tick            →  agent> tick counter=2   (fresh container, restored state)
-
-# Demo 3 — stall recovery: the first attempt hangs inside the sandbox. The
-# watchdog restarts the driver in place, then kills the sandbox when that does
-# not help, and the answer arrives from a fresh one.
-.venv/bin/python examples/cli_chat.py --hang-first --boot-grace 6 \
-    --liveness-quiet 3 --lock-seconds 2
+# send a message (its id makes retries safe), then stream the answer
+curl -X POST localhost:7070/v1/workspaces/user-42/conversations/c_01J9Z.../messages \
+  -H "Authorization: Bearer $ROOST_KEY" -d '{"id": "m-1", "text": "Fix the failing test"}'
+curl -N -H "Authorization: Bearer $ROOST_KEY" localhost:7070/v1/workspaces/user-42/conversations/c_01J9Z.../events
 ```
 
-The demo agent is a deliberately boring echo harness — the point of these demos
-is the runtime semantics around it, which don't care what the agent is. The
-harness interface is pluggable; a Claude Agent SDK harness is on the roadmap
-before 0.1.
+A message sent while the agent is working waits for the next run, or joins the running one with `"delivery": "steer"`.
 
-## How it sits in your stack
+## Restore and branch
 
-```
-your app            identity, routing, rendering, storage choice
-──── six ports ────────────────────────────────────────────────
-roost (host side)   session↔sandbox registry · turn pipeline ·
-                    watchdog · event reducer · forced update
-──── control protocol (loopback HTTP, PROTOCOL.md) ────────────
-roost driver        turn registry (idempotency) · harness runner ·
-(inside sandbox)    event log · workspace pack/restore
-──── harness ──────────────────────────────────────────────────
-your agent          Claude Agent SDK, or anything with a run() loop
+Every step leaves a snapshot: the workspace's files and Pi's storage at that moment, plus how the sandbox was configured.
+
+```bash
+roost ws snapshots user-42 --run run_01J...                         # the snapshots of one run, step by step
+roost ws restore user-42 --at 2026-10-03T10:00Z                     # files and transcripts go back together
+roost ws fork user-42 --snapshot snap_01J... --names rl-1,rl-2,rl-3   # independent workspaces, chunks shared
 ```
 
-You inject six small interfaces — delivery queue, state store, snapshot store,
-sandbox backend, event sink, session context — and roost owns the lifecycle
-between them. Defaults ship for local use (in-process queue, SQLite, filesystem
-or S3-compatible snapshots, Docker sandboxes); swap any of them for your infra.
-The library never sees your domain: sessions, turns and snapshot keys are opaque
-strings, and host context rides through as an uninterpreted blob.
+Backups are [kopia](https://kopia.io) repositories, one per tenant, on your disk, S3 or GCS: incremental, deduplicated and encrypted; kopia alone can restore the files. Their passwords never enter a sandbox.
 
-## Status
+## Operating it
 
-Pre-release, interfaces stabilizing. Implemented and tested today: the turn
-pipeline, SQLite and Postgres state stores (advisory-locked session mutex for
-multi-consumer hosts), in-process delivery, the driver and control protocol,
-Docker and E2B backends, filesystem/S3 snapshot stores, a production-grade
-watchdog (dual liveness/progress clocks, /proc activity probe, a persistent
-restart→kill→abandon ladder), fingerprint-driven zero-downtime updates, and a
-Claude Agent SDK harness whose session memory rides the workspace snapshot.
-Not yet: PyPI packaging, and the Claude harness still awaits its real-LLM
-acceptance run. See [ROADMAP.md](ROADMAP.md).
+The `roost` CLI covers every layer and is built for agents as much as for people: `--json` everywhere, stable schemas, meaningful exit codes, and a `SKILL.md` so an agent can run it.
 
-## Read next
+| Level | Look | Act |
+|---|---|---|
+| Workspace | `roost ws inspect`, `roost ws snapshots` | `roost ws recover`, `roost ws revoke`, `roost ws snapshot`, `roost ws restore`, `roost ws fork` |
+| Conversation | `roost conv list`, `roost conv transcript` | `roost conv interrupt`, `roost conv reset` |
+| Everything | `roost status`, `roost doctor` | |
 
-- [DESIGN.md](DESIGN.md) — the mental model and the three invariants.
-- [PROTOCOL.md](PROTOCOL.md) — the wire contract, including the idempotency split
-  between host and driver.
-- [CONTRACTS.md](CONTRACTS.md) — pinned interfaces and the adjudication log of
-  every design decision made while porting this from a production system.
+Commands that change state need an operator token and a `--reason`, support `--dry-run`, and are audited.
+
+## Processes
+
+All of roost's logic outside the sandbox is one Go library, `roost-core`. One `roost` binary runs it as two services, plus the CLI:
+
+- **`roost serve`**: the control plane, `roost-core` behind one HTTP API. One process with SQLite by default, Postgres when you need it.
+- **`roost backup`**: pulls changes from every running sandbox into kopia, and pushes snapshots into restored and forked ones.
+
+Inside every sandbox:
+
+- **`roost-driver`** gates every request, keeps exactly one agent running and captures changes at low priority.
+- **`roost-agent-pi`** runs Pi Durable with Pi's prompts, tools and skills.
+
+Nothing in a sandbox calls roost, so roost needs no public address. Agents reach models through an LLM gateway such as LiteLLM, with a key roost mints per grant and revokes at will, or through E2B Cloud's egress proxy.
+
+## What roost is not
+
+- **Not an agent loop.** The agent is Pi Durable, with any model Pi supports.
+- **Not a chat integration.** Slack, Feishu or Telegram bots are built on the conversation API.
+- **Not a sandbox provider.** Sandboxes run on E2B Cloud, or on [E2B Embed](https://github.com/e2b-dev/runtime/tree/main/embed) (preview) on your own Linux machines with no E2B account.
+- **Not exactly-once.** A tool that was running when a process died is not run again unless it is safe to replay, and side effects it already caused are not undone.
+
+## Run it
+
+```bash
+roost up                      # any machine: sandboxes on E2B Cloud
+docker compose up -d --wait   # one Linux machine with KVM: roost, LiteLLM and E2B Embed
+terraform apply               # a GCP VM with a persistent data disk
+kubectl apply -k              # KVM nodes in your Kubernetes cluster
+```
+
+## Design
+
+- [RFC 0001: a durable agent runtime built on Pi Durable](docs/rfcs/0001-durable-agent-runtime.md): the principles, the model, where state lives, and why.
+- [Contracts](docs/specs/contracts.md): the APIs, invariants, backups, credentials, Kit support and conformance scenarios.
+- [Sandbox protocols](docs/specs/driver-protocol.md): the execution grant, the driver, the conversation interface and backup capture.
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).

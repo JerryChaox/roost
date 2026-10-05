@@ -1,0 +1,98 @@
+### FindTemplate by alias
+[+  0.000s] >>> GET https://api.e2b.app/templates/aliases/roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217
+    X-Api-Key: <redacted len=44>
+[+  0.704s] <<< 200 OK (704ms) GET /templates/aliases/roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"public":false,"templateID":"uh60ctbk06f4mrwuv6d6"}
+RESULT alias status=200 elapsed=704ms
+### by namespaced name
+[+  0.000s] >>> GET https://api.e2b.app/templates/aliases/roost%2Froost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217
+    X-Api-Key: <redacted len=44>
+[+  0.670s] <<< 200 OK (670ms) GET /templates/aliases/roost/roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"public":false,"templateID":"uh60ctbk06f4mrwuv6d6"}
+RESULT alias status=200 elapsed=670ms
+### missing alias
+[+  0.000s] >>> GET https://api.e2b.app/templates/aliases/roost-0000000000000000000000000000000000000000000000000000000000000000
+    X-Api-Key: <redacted len=44>
+[+  0.695s] <<< 404 Not Found (695ms) GET /templates/aliases/roost-0000000000000000000000000000000000000000000000000000000000000000
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"code":404,"message":"template 'roost-0000000000000000000000000000000000000000000000000000000000000000' not found"}
+RESULT alias status=404 elapsed=695ms
+### name validation (POST /v3/templates; any 202 is deleted below)
+--- name len=129: roost-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+[+  0.000s] >>> POST https://api.e2b.app/v3/templates
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"name":"roost-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","cpuCount":1,"memoryMB":512}
+[+  0.668s] <<< 400 Bad Request (668ms) POST /v3/templates
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"code":400,"message":"validation error: error in openapi3filter.RequestError: request body has an error: doesn't match schema #/components/schemas/TemplateBuildRequestV3: Error at \"/name\": maximum string length is 128"}
+RESULT raw status=400
+--- name len=18: roost.spike.dotted
+[+  0.000s] >>> POST https://api.e2b.app/v3/templates
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"name":"roost.spike.dotted","cpuCount":1,"memoryMB":512}
+[+  0.675s] <<< 400 Bad Request (674ms) POST /v3/templates
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"code":400,"message":"Invalid name: invalid template ID: roost.spike.dotted"}
+RESULT raw status=400
+--- name len=22: Roost-UPPER-1791127950
+[+  0.000s] >>> POST https://api.e2b.app/v3/templates
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"name":"Roost-UPPER-1791127950","cpuCount":1,"memoryMB":512}
+[+  0.714s] <<< 202 Accepted (714ms) POST /v3/templates
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"aliases":["roost-upper-1791127950"],"buildID":"4b6209b2-f4d7-4bf8-9604-898f658d8b45","names":["roost/roost-upper-1791127950"],"public":false,"tags":["default"],"templateID":"rks335kjdu6ntfllkfzv"}
+RESULT raw status=202
+--- name len=128: roost-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+[+  0.000s] >>> POST https://api.e2b.app/v3/templates
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"name":"roost-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","cpuCount":1,"memoryMB":512}
+[+  0.680s] <<< 202 Accepted (680ms) POST /v3/templates
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"aliases":["roost-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"buildID":"f3e7b848-da20-4c4b-9ec5-d2dd16c7a7ab","names":["roost/roost-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"public":false,"tags":["default"],"templateID":"e76kg4ppsyhq6x6l0oi4"}
+RESULT raw status=202
+[+  0.000s] >>> GET https://api.e2b.app/templates
+    X-Api-Key: <redacted len=44>
+[+  0.650s] <<< 200 OK (650ms) GET /templates
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: [{"aliases":["roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217"],"buildCount":1,"buildID":"062628d1-c684-464c-9cb7-ca0976e1b87a","buildStatus":"ready","cpuCount":1,"createdAt":"2026-10-04T15:23:19.028003Z","createdBy":null,"diskSizeMB":11798,"envdVersion":"0.9.0","lastSpawnedAt":"2026-10-04T15:29:30.767427Z","memoryMB":512,"names":["roost/roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217"],"public":false,"spawnCount":7,"templateID":"uh60ctbk06f4mrwuv6d6","updatedAt":"2026-10-04T15:23:19.028003Z"},{"aliases":["roost-upper-1791127950"],"buildCount":1,"buildID":"00000000-0000-0000-0000-000000000000","buildStatus":"waiting","cpuCount":0,"createdAt":"2026-10-04T15:32:33.188547Z","createdBy":null,"diskSizeMB":0,"envdVersion":"","lastSpawnedAt":null,"memoryMB":0,"names":["roost/roost-upper-1791127950"],"public":false,"spawnCount":0,"templateID":"rks335kjdu6ntfllkfzv","updatedAt":"2026-10-04T15:32:33.188547Z"},{"aliases":["roost-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"buildCount":1,"buildID":"00000000-0000-0000-0000-000000000000","buildStatus":"waiting","cpuCount":0,"createdAt":"2026-10-04T15:32:33.902229Z","createdBy":null,"diskSizeMB":0,"envdVersion":"","lastSpawnedAt":null,"memoryMB":0,"names":["roost/roost-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],"public":false,"spawnCount":0,"templateID":"e76kg4ppsyhq6x6l0oi4","updatedAt":"2026-10-04T15:32:33.902229Z"}]
+  template uh60ctbk06f4mrwuv6d6 names=[roost/roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217] status=ready cpu=1 mem=512
+  template rks335kjdu6ntfllkfzv names=[roost/roost-upper-1791127950] status=waiting cpu=0 mem=0
+  template e76kg4ppsyhq6x6l0oi4 names=[roost/roost-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb] status=waiting cpu=0 mem=0
+RESULT templates count=3
+[+  0.000s] >>> DELETE https://api.e2b.app/templates/rks335kjdu6ntfllkfzv
+    X-Api-Key: <redacted len=44>
+[+  0.875s] <<< 204 No Content (875ms) DELETE /templates/rks335kjdu6ntfllkfzv
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+RESULT template-delete status=204
+[+  0.000s] >>> DELETE https://api.e2b.app/templates/e76kg4ppsyhq6x6l0oi4
+    X-Api-Key: <redacted len=44>
+[+  0.738s] <<< 204 No Content (738ms) DELETE /templates/e76kg4ppsyhq6x6l0oi4
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+RESULT template-delete status=204
+[+  0.680s] <<< 200 OK (680ms) GET /templates
+  template uh60ctbk06f4mrwuv6d6 names=[roost/roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217] status=ready cpu=1 mem=512
+RESULT templates count=1

@@ -1,0 +1,8 @@
+[+  0.698s] <<< 200 OK (698ms) POST /process.Process/Start
+  [ 0.698s] start pid=380
+  [ 0.700s] stdout| begin
+  [50.701s] keepalive
+  [100.700s] keepalive
+  [130.718s] stdout| done
+  [130.718s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=2m10.718s

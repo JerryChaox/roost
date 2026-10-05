@@ -1,37 +1,15 @@
-# Byte-compiled / cache
-__pycache__/
-*.py[cod]
-*$py.class
-.mypy_cache/
-.ruff_cache/
-.pytest_cache/
+# build output
+/bin/
+/dist/
 
-# Distribution / packaging
-build/
-dist/
-*.egg-info/
-*.egg
-.eggs/
-wheels/
-
-# Virtual environments
-.venv/
-venv/
-env/
-ENV/
-
-# Tooling / editors
-.python-version
-.coverage
-.coverage.*
-htmlcov/
-.tox/
+# editors / OS
 .idea/
 .vscode/
-
-# OS
 .DS_Store
 
 # local secrets
 .env
-.roost-snapshots/
+
+# teaser video source (media/teaser): dependencies and render output
+media/**/node_modules/
+media/**/out/

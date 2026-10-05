@@ -1,0 +1,25 @@
+{
+  "name": "roost-teaser",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Remotion source for assets/roost-teaser.{mp4,webp}. `npm ci && npm run render` writes both into out/ (needs ffmpeg and libwebp's img2webp on PATH).",
+  "scripts": {
+    "render": "npm run render:mp4 && npm run render:webp",
+    "render:mp4": "remotion render src/index.ts RoostTeaser out/roost-teaser.raw.mp4 --codec=h264 --image-format=png --pixel-format=yuv420p --color-space=bt709 --crf=18 --muted && ffmpeg -v error -y -i out/roost-teaser.raw.mp4 -c copy -movflags +faststart out/roost-teaser.mp4 && node -e \"require('fs').rmSync('out/roost-teaser.raw.mp4')\"",
+    "render:webp": "node webp.mjs out/roost-teaser.mp4 out/roost-teaser.webp 90 800 near60",
+    "stills": "node stills.mjs out/stills",
+    "studio": "remotion studio src/index.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.530",
+    "@remotion/google-fonts": "4.0.530",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "remotion": "4.0.530"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.8",
+    "typescript": "5.8.3"
+  }
+}

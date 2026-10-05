@@ -1,0 +1,19 @@
+[+  0.816s] <<< 200 OK (815ms) POST /process.Process/Start
+  [ 0.815s] start pid=1573
+  [ 0.818s] stdout| --- as user: envd List from inside, no token:
+  [ 0.830s] stdout| {"code":401,"message":"unauthorized access, please provide a valid access token or method signing if supported"}
+  [ 0.830s] stdout| 
+  [ 0.830s] stdout| HTTP 401
+  [ 0.832s] stdout| 
+  [ 0.832s] stdout| --- /proc/1530/environ readable by user?
+  [ 0.832s] stdout| cat: /proc/1530/environ: Permission denied
+  [ 0.836s] stdout| 
+  [ 0.836s] stdout| --- envd /envs:
+  [ 0.845s] stdout| {"code":401,"message":"unauthorized access, please provide a valid access token or method signing if supported"}
+  [ 0.845s] stdout| 
+  [ 0.845s] stdout| HTTP 401
+  [ 0.845s] stdout| 
+  [ 0.847s] stdout| --- sudo -n works?
+  [ 1.850s] stdout| sudo: yes (passwordless)
+  [ 1.850s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=1.85s

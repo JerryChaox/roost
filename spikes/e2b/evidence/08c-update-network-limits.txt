@@ -1,0 +1,54 @@
+### re-grant (rotated value), 10 rule domains
+[+  0.000s] >>> PUT https://api.e2b.app/sandboxes/id0a6t911u2kxlo5oo7iz/network
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"allowOut": ["httpbin.org", "postman-echo.com"], "denyOut": ["0.0.0.0/0"], "rules": {"d0.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d1.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d2.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d3.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d4.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d5.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d6.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d7.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d8.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "httpbin.org": [{"transform": {"headers": {"x-api-key": "dummy-rotated-CCCC"}}}]}}
+[+  0.891s] <<< 204 No Content (891ms) PUT /sandboxes/id0a6t911u2kxlo5oo7iz/network
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+RESULT network status=204 elapsed=891ms
+[+  0.831s] <<< 200 OK (831ms) POST /process.Process/Start
+  [ 0.831s] start pid=1980
+  [ 1.144s] stdout|     "X-Api-Key": "dummy-rotated-CCCC"
+  [ 1.147s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=1.147s
+### 11 rule domains
+[+  0.000s] >>> PUT https://api.e2b.app/sandboxes/id0a6t911u2kxlo5oo7iz/network
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"allowOut": ["httpbin.org"], "denyOut": ["0.0.0.0/0"], "rules": {"d0.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d1.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d2.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d3.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d4.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d5.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d6.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d7.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d8.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d9.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}], "d10.example.com": [{"transform": {"headers": {"x-api-key": "dummy"}}}]}}
+[+  0.678s] <<< 400 Bad Request (678ms) PUT /sandboxes/id0a6t911u2kxlo5oo7iz/network
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"code":400,"message":"Network rules can have at most 10 domains."}
+RESULT network status=400 elapsed=678ms
+### config after rejected PUT:
+"network":{"allowOut":["httpbin.org","postman-echo.com"]
+[+  0.698s] <<< 200 OK (698ms) POST /process.Process/Start
+  [ 0.698s] start pid=1984
+  [ 1.031s] stdout|     "X-Api-Key": "dummy-rotated-CCCC"
+  [ 1.031s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=1.031s
+### two rules for one domain
+[+  0.000s] >>> PUT https://api.e2b.app/sandboxes/id0a6t911u2kxlo5oo7iz/network
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"allowOut":["httpbin.org"],"denyOut":["0.0.0.0/0"],"rules":{"httpbin.org":[{"transform":{"headers":{"a":"1"}}},{"transform":{"headers":{"b":"2"}}}]}}
+[+  0.682s] <<< 400 Bad Request (682ms) PUT /sandboxes/id0a6t911u2kxlo5oo7iz/network
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"code":400,"message":"Domain \"httpbin.org\" can have at most 1 transform rule."}
+RESULT network status=400 elapsed=682ms
+### allowPublicTraffic in update body
+[+  0.000s] >>> PUT https://api.e2b.app/sandboxes/id0a6t911u2kxlo5oo7iz/network
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"allowOut":["httpbin.org","postman-echo.com"],"denyOut":["0.0.0.0/0"],"allowPublicTraffic":true}
+[+  0.708s] <<< 204 No Content (708ms) PUT /sandboxes/id0a6t911u2kxlo5oo7iz/network
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+RESULT network status=204 elapsed=708ms
+RESULT http status=403 elapsed=656ms
+"network":{"allowOut":["httpbin.org","postman-echo.com"],"allowPublicTraffic":false,"denyOut":["0.0.0.0/0"]}

@@ -1,0 +1,20 @@
+[+  0.000s] >>> PUT https://api.e2b.app/sandboxes/id0a6t911u2kxlo5oo7iz/network
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"allowOut":["httpbin.org"],"denyOut":["0.0.0.0/0"],"rules":{"httpbin.org":[{"transform":{"headers":{"x-api-key":"dummy-injected-EEEE"}}}]}}
+[+  0.698s] <<< 204 No Content (698ms) PUT /sandboxes/id0a6t911u2kxlo5oo7iz/network
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+RESULT network status=204 elapsed=698ms
+[+  1.058s] <<< 204 No Content (1.057s) POST /sandboxes/id0a6t911u2kxlo5oo7iz/pause
+RESULT pause status=204 elapsed=1.058s
+[+  4.150s] <<< 201 Created (4.15s) POST /v2/sandboxes/id0a6t911u2kxlo5oo7iz/connect
+RESULT connect status=201 elapsed=4.151s
+[+  0.733s] <<< 200 OK (733ms) POST /process.Process/Start
+  [ 0.733s] start pid=370
+  [ 0.776s] stdout| uptime=3.65
+  [ 1.262s] stdout|     "X-Api-Key": "dummy-injected-EEEE"
+  [ 1.318s] stdout| postman-echo (now not allowed): http=000
+  [ 1.372s] stdout|    i:O = E2B, CN = E2B Proxy CA
+  [ 1.375s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=1.375s

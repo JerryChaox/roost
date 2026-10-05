@@ -1,0 +1,59 @@
+### connect on running restricted sandbox: is trafficAccessToken returned?
+[+  0.000s] >>> POST https://api.e2b.app/v2/sandboxes/id0a6t911u2kxlo5oo7iz/connect
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"timeout":600}
+[+  0.846s] <<< 200 OK (846ms) POST /v2/sandboxes/id0a6t911u2kxlo5oo7iz/connect
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","envdAccessToken":"<redacted len=64>","envdVersion":"0.9.0","sandboxID":"id0a6t911u2kxlo5oo7iz","templateID":"uh60ctbk06f4mrwuv6d6","trafficAccessToken":"<redacted len=64>"}
+RESULT connect status=200 elapsed=849ms
+### GET detail: trafficAccessToken field present?
+"network":{"allowOut":["httpbin.org"],"allowPublicTraffic":false,"denyOut":["0.0.0.0/0"],"rules":{"httpbin.org":[{"transform":{"headers":{"x-api-key":"dummy-injected-EEEE"
+### template requested but build never started
+[+  0.000s] >>> POST https://api.e2b.app/v3/templates
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"name":"roost-spike-unbuilt","cpuCount":1,"memoryMB":512}
+[+  0.724s] <<< 202 Accepted (724ms) POST /v3/templates
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"aliases":["roost-spike-unbuilt"],"buildID":"5dc23681-6c7d-4c41-89e6-e5e9b83485a6","names":["roost/roost-spike-unbuilt"],"public":false,"tags":["default"],"templateID":"6l7k1uxiirhg5ip0r2ky"}
+RESULT raw status=202
+[+  0.000s] >>> GET https://api.e2b.app/templates/aliases/roost-spike-unbuilt
+    X-Api-Key: <redacted len=44>
+[+  0.661s] <<< 200 OK (661ms) GET /templates/aliases/roost-spike-unbuilt
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"public":false,"templateID":"6l7k1uxiirhg5ip0r2ky"}
+RESULT alias status=200 elapsed=662ms
+[+  0.000s] >>> POST https://api.e2b.app/v2/sandboxes
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"templateID":"roost-spike-unbuilt","timeout":60,"metadata":{"roost.spike":"1"}}
+[+  0.674s] <<< 404 Not Found (674ms) POST /v2/sandboxes
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"code":404,"message":"tag 'default' does not exist for template 'roost/roost-spike-unbuilt'"}
+RESULT create status=404 elapsed=674ms
+[+  0.000s] >>> GET https://api.e2b.app/templates/6l7k1uxiirhg5ip0r2ky
+    X-Api-Key: <redacted len=44>
+[+  0.652s] <<< 200 OK (651ms) GET /templates/6l7k1uxiirhg5ip0r2ky
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"aliases":["roost-spike-unbuilt"],"builds":[{"buildID":"5dc23681-6c7d-4c41-89e6-e5e9b83485a6","cpuCount":1,"createdAt":"2026-10-04T15:38:08.732801Z","memoryMB":512,"status":"waiting","updatedAt":"2026-10-04T15:38:08.732801Z"}],"createdAt":"2026-10-04T15:38:08.732801Z","lastSpawnedAt":null,"names":["roost/roost-spike-unbuilt"],"public":false,"spawnCount":0,"templateID":"6l7k1uxiirhg5ip0r2ky","updatedAt":"2026-10-04T15:38:08.732801Z"}
+RESULT raw status=200
+[+  0.000s] >>> DELETE https://api.e2b.app/templates/6l7k1uxiirhg5ip0r2ky
+    X-Api-Key: <redacted len=44>
+[+  0.665s] <<< 204 No Content (665ms) DELETE /templates/6l7k1uxiirhg5ip0r2ky
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+RESULT template-delete status=204
+[+  0.683s] <<< 200 OK (683ms) GET /templates
+  template uh60ctbk06f4mrwuv6d6 names=[roost/roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217] status=ready cpu=1 mem=512
+RESULT templates count=1

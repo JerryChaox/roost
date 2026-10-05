@@ -1,0 +1,25 @@
+### PUT network on PAUSED sandbox (revoke while paused)
+RESULT get state=paused endAt=2026-10-04T15:48:07Z
+[+  0.000s] >>> PUT https://api.e2b.app/sandboxes/id0a6t911u2kxlo5oo7iz/network
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"allowOut":["httpbin.org"],"denyOut":["0.0.0.0/0"]}
+[+  0.730s] <<< 404 Not Found (730ms) PUT /sandboxes/id0a6t911u2kxlo5oo7iz/network
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"code":404,"message":"Sandbox \"id0a6t911u2kxlo5oo7iz\" doesn't exist or you don't have access to it"}
+RESULT network status=404 elapsed=730ms
+RESULT get state=paused endAt=2026-10-04T15:48:07Z
+"network":{"allowOut":["httpbin.org"],"allowPublicTraffic":false,"denyOut":["0.0.0.0/0"],"rules":{"httpbin.org":[{"transform":{"headers":{"x-api-key":"dummy-injected-EEEE"}
+### domain in denyOut
+[+  0.000s] >>> PUT https://api.e2b.app/sandboxes/igp6ksg7ri0xb8938kmel/network
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"denyOut":["example.com"]}
+[+  0.691s] <<< 400 Bad Request (691ms) PUT /sandboxes/igp6ksg7ri0xb8938kmel/network
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"code":400,"message":"invalid denied CIDR example.com"}
+RESULT network status=400 elapsed=691ms

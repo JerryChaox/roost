@@ -1,0 +1,41 @@
+[+  0.667s] <<< 200 OK (666ms) POST /process.Process/Start
+  [ 0.667s] start pid=2014
+  [ 0.677s] stdout| 2000 sleep 100000
+  [ 0.679s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=679ms
+### fresh process with unique tag
+[+  0.671s] <<< 200 OK (671ms) POST /process.Process/Start
+  [ 0.671s] start pid=2016
+RESULT exec bg-started pid=2016 (closing stream)
+[+  0.000s] >>> POST https://49983-id0a6t911u2kxlo5oo7iz.e2b.app/process.Process/SendSignal
+    Accept-Encoding: gzip
+    Connect-Protocol-Version: 1
+    Content-Type: application/json
+    X-Access-Token: <redacted len=64>
+    body: {"process":{"tag":"roost-driver-u1"}, "signal":"SIGNAL_SIGTERM"}
+[+  0.655s] <<< 200 OK (655ms) POST /process.Process/SendSignal
+    Content-Type: application/json
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {}
+RESULT signal ok
+### by pid (1999)
+[+  0.000s] >>> POST https://49983-id0a6t911u2kxlo5oo7iz.e2b.app/process.Process/SendSignal
+    Accept-Encoding: gzip
+    Connect-Protocol-Version: 1
+    Content-Type: application/json
+    X-Access-Token: <redacted len=64>
+    body: {"process":{"pid":1999}, "signal":"SIGNAL_SIGKILL"}
+[+  0.656s] <<< 200 OK (655ms) POST /process.Process/SendSignal
+    Content-Type: application/json
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {}
+RESULT signal ok
+[+  0.669s] <<< 200 OK (669ms) POST /process.Process/List
+RESULT ps count=0
+[+  0.692s] <<< 200 OK (692ms) POST /process.Process/Start
+  [ 0.693s] start pid=2023
+  [ 0.699s] stdout| 2000 sleep 100000
+  [ 0.701s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=701ms

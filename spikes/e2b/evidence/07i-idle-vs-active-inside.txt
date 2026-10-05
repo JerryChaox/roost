@@ -1,0 +1,15 @@
+[+  0.742s] <<< 200 OK (741ms) POST /process.Process/Start
+  [ 0.742s] start pid=512
+  [ 0.744s] stdout| start=1791131245
+  [ 0.745s] stdout| --- active (inside -> own public URL):
+  [ 0.756s] stdout| 50
+  [ 0.844s] stdout| 1791131980 data: {"i":49,"sentAt":1791131980770}
+  [ 0.844s] stdout| exit 1791131980
+  [ 0.844s] stdout| --- idle 650s (inside -> own public URL):
+  [ 0.849s] stdout| 1791131245 data: {"phase":"start","sentAt":1791131245705}
+  [ 0.849s] stdout| 1791131895 data: {"phase":"after-idle","idleSec":650,"sentAt":1791131895706}
+  [ 0.849s] stdout| exit 1791131895
+  [ 0.852s] stdout| /tmp/in-active.log: ended 735s after start
+  [ 0.855s] stdout| /tmp/in-idle.log: ended 650s after start
+  [ 0.855s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=855ms

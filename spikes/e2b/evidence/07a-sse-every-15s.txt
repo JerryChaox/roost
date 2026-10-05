@@ -1,0 +1,24 @@
+[+  0.000s] >>> GET https://8080-igp6ksg7ri0xb8938kmel.e2b.app/sse?n=9&every=15000
+[+  0.715s] <<< 200 OK (715ms) GET /sse
+    Content-Type: text/event-stream
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+  [recv +  0.717s @1791127932758] data: {"i":0,"sentAt":1791127933484}
+  [recv +  0.717s @1791127932758] 
+  [recv + 15.715s @1791127947755] data: {"i":1,"sentAt":1791127948485}
+  [recv + 15.715s @1791127947755] 
+  [recv + 30.714s @1791127962754] data: {"i":2,"sentAt":1791127963485}
+  [recv + 30.714s @1791127962754] 
+  [recv + 45.735s @1791127977774] data: {"i":3,"sentAt":1791127978485}
+  [recv + 45.735s @1791127977775] 
+  [recv + 60.715s @1791127992754] data: {"i":4,"sentAt":1791127993485}
+  [recv + 60.715s @1791127992754] 
+  [recv + 75.716s @1791128007754] data: {"i":5,"sentAt":1791128008486}
+  [recv + 75.716s @1791128007754] 
+  [recv + 90.715s @1791128022753] data: {"i":6,"sentAt":1791128023486}
+  [recv + 90.715s @1791128022753] 
+  [recv +105.760s @1791128037798] data: {"i":7,"sentAt":1791128038486}
+  [recv +105.760s @1791128037798] 
+  [recv +120.717s @1791128052754] data: {"i":8,"sentAt":1791128053487}
+  [recv +120.717s @1791128052754] 
+RESULT http-sse status=200 ended after 2m0.717s: EOF

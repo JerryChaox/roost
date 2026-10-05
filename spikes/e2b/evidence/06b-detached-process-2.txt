@@ -1,0 +1,36 @@
+[+  0.001s] >>> POST https://49983-igp6ksg7ri0xb8938kmel.e2b.app/process.Process/List
+    Accept-Encoding: gzip
+    Connect-Protocol-Version: 1
+    Content-Type: application/json
+    X-Access-Token: <redacted len=64>
+    body: {}
+[+  0.781s] <<< 200 OK (780ms) POST /process.Process/List
+    Content-Type: application/json
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"processes":[{"config":{"cmd":"/bin/bash","args":["-l","-c","PORT=9000 node /opt/roost/fake-driver.js"],"envs":{"NODE_VERSION":"22.23.3","PATH":"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","YARN_VERSION":"1.22.22"}},"pid":351},{"config":{"cmd":"/usr/local/bin/node","args":["/opt/roost/fake-driver.js"],"envs":{"PORT":"8080","ROOST_GRANT":"dummy-grant-token-0123456789"}},"pid":1530,"tag":"roost-driver"}]}
+  pid=351 tag="" cmd="/bin/bash" args=["-l" "-c" "PORT=9000 node /opt/roost/fake-driver.js"] envs(returned by List, values elided)=[NODE_VERSION=<len 7> PATH=<len 121> YARN_VERSION=<len 7>]
+  pid=1530 tag="roost-driver" cmd="/usr/local/bin/node" args=["/opt/roost/fake-driver.js"] envs(returned by List, values elided)=[PORT=<len 4> ROOST_GRANT=<len 28>]
+RESULT ps count=2
+[+  0.706s] <<< 200 OK (706ms) POST /process.Process/Start
+  [ 0.706s] start pid=1558
+  [ 0.720s] stdout|     351     312 user     node /opt/roost/fake-driver.js
+  [ 0.720s] stdout|    1530     312 root     /usr/local/bin/node /opt/roost/fake-driver.js
+  [ 0.734s] stdout| pid 351 /proc/environ has ROOST_GRANT: 0
+  [ 0.738s] stdout| pid 1530 /proc/environ has ROOST_GRANT: 1
+  [ 0.742s] stdout| pid 1558 /proc/environ has ROOST_GRANT: 0
+  [ 0.750s] stdout| total 1
+  [ 0.750s] stdout| drwxr-xr-x 2 root root 60 Oct  4 15:26 .
+  [ 0.750s] stdout| drwxr-xr-x 3 root root 60 Oct  4 15:23 ..
+  [ 0.750s] stdout| -rw-r--r-- 1 root root  7 Oct  4 15:26 synced.txt
+  [ 0.750s] stdout| -rw-r--r-- 1 root root 20 Oct  4 15:26 unsynced.txt
+  [ 0.753s] end exit=0 exited=true status="exit status 0" err=""
+RESULT exec exit=0 elapsed=753ms
+[+  0.000s] >>> GET https://8080-igp6ksg7ri0xb8938kmel.e2b.app/health
+[+  0.821s] <<< 200 OK (821ms) GET /health
+    Content-Type: application/json
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"ok":true,"port":8080,"pid":1530,"uid":0,"user":"root","bootId":"6195d59f-a85f-4a7e-b556-91f7bf8c66dc","startedAt":1791127558629,"ticks":28,"uptimeSec":116.1,"grantSeen":"len=28","envStillHasGrant":false,"headers":{"host":"8080-igp6ksg7ri0xb8938kmel.e2b.app","user-agent":"Go-http-client/2.0","accept-encoding":"gzip","via":"1.1 google","x-cloud-trace-context":"14a0170182380825dda9d8282aa93408/5161966470379747672","x-request-id":"2b7de9f2-1313-4cc3-a603-97b98234c687","connection":"close"}}
+
+RESULT http status=200 elapsed=821ms

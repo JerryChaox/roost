@@ -1,0 +1,58 @@
+[+  0.000s] >>> POST https://api.e2b.app/sandboxes/igp6ksg7ri0xb8938kmel/pause
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {}
+[+  0.811s] <<< 204 No Content (811ms) POST /sandboxes/igp6ksg7ri0xb8938kmel/pause
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+RESULT pause status=204 elapsed=811ms
+[+  0.667s] <<< 200 OK (667ms) GET /v2/sandboxes
+RESULT poll-list id=igp6ksg7ri0xb8938kmel state=paused reached after 668ms (1 polls)
+[+  0.000s] >>> POST https://api.e2b.app/sandboxes/igp6ksg7ri0xb8938kmel/pause
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {}
+[+  0.687s] <<< 409 Conflict (687ms) POST /sandboxes/igp6ksg7ri0xb8938kmel/pause
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"code":409,"message":"Error pausing sandbox - sandbox 'igp6ksg7ri0xb8938kmel' is already paused"}
+RESULT pause status=409 elapsed=687ms
+[+  0.000s] >>> GET https://8080-igp6ksg7ri0xb8938kmel.e2b.app/health
+[+  0.834s] <<< 502 Bad Gateway (834ms) GET /health
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"sandboxId":"igp6ksg7ri0xb8938kmel","message":"The sandbox was not found","code":502}
+RESULT http status=502 elapsed=834ms
+[+  0.000s] >>> GET https://49983-igp6ksg7ri0xb8938kmel.e2b.app/health
+[+  0.697s] <<< 502 Bad Gateway (696ms) GET /health
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"sandboxId":"igp6ksg7ri0xb8938kmel","message":"The sandbox was not found","code":502}
+RESULT http status=502 elapsed=697ms
+[+  0.657s] <<< 502 Bad Gateway (657ms) POST /process.Process/List
+ERROR: unavailable: 502 Bad Gateway
+[+  0.000s] >>> POST https://api.e2b.app/v2/sandboxes/igp6ksg7ri0xb8938kmel/connect
+    Content-Type: application/json
+    X-Api-Key: <redacted len=44>
+    body: {"timeout":900}
+[+  0.750s] <<< 201 Created (750ms) POST /v2/sandboxes/igp6ksg7ri0xb8938kmel/connect
+    Content-Type: application/json; charset=utf-8
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"alias":"roost-004fa96226411733e2d56c92bc2de07f02c58c0d6ce308f6343832d719254217","clientID":"6532622b","envdAccessToken":"<redacted len=64>","envdVersion":"0.9.0","sandboxID":"igp6ksg7ri0xb8938kmel","templateID":"uh60ctbk06f4mrwuv6d6"}
+RESULT connect status=201 elapsed=751ms
+[+  0.672s] <<< 200 OK (672ms) POST /process.Process/List
+  pid=351 tag="" cmd="/bin/bash" args=["-l" "-c" "PORT=9000 node /opt/roost/fake-driver.js"] envs(returned by List, values elided)=[NODE_VERSION=<len 7> PATH=<len 121> YARN_VERSION=<len 7>]
+  pid=1530 tag="roost-driver" cmd="/usr/local/bin/node" args=["/opt/roost/fake-driver.js"] envs(returned by List, values elided)=[PORT=<len 4> ROOST_GRANT=<len 28>]
+RESULT ps count=2
+[+  0.000s] >>> GET https://8080-igp6ksg7ri0xb8938kmel.e2b.app/health
+[+  0.943s] <<< 200 OK (943ms) GET /health
+    Content-Type: application/json
+    X-Ratelimit-Limit: 60000
+    X-Ratelimit-Remaining: 60000
+    body: {"ok":true,"port":8080,"pid":1530,"uid":0,"user":"root","bootId":"6195d59f-a85f-4a7e-b556-91f7bf8c66dc","startedAt":1791127558629,"ticks":57,"uptimeSec":144.45,"grantSeen":"len=28","envStillHasGrant":false,"headers":{"host":"8080-igp6ksg7ri0xb8938kmel.e2b.app","user-agent":"Go-http-client/2.0","accept-encoding":"gzip","via":"1.1 google","x-cloud-trace-context":"70550ee213ae7f06a7d54ac34d3435ad/11307152398219939855","x-request-id":"8f65d18e-1659-495c-84c6-26534383948b","connection":"close"}}
+
+RESULT http status=200 elapsed=943ms
