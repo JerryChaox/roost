@@ -1,0 +1,34 @@
+---
+import { roadmap, worksToday } from '../data/home';
+import { inline } from '../lib/text';
+interface Props { compact?: boolean; headingLevel?: 2 | 3 }
+const { compact = false, headingLevel = 3 } = Astro.props;
+const H = `h${headingLevel}` as 'h2' | 'h3';
+---
+<div class:list={['status', { compact }]}>
+  <section class="status-col status-ok" aria-labelledby={compact ? 'st-ok-c' : 'st-ok'}>
+    <H id={compact ? 'st-ok-c' : 'st-ok'} class="status-h"><span class="dot dot-ok" aria-hidden="true"></span>Works today</H>
+    <p class="status-note">Milestone M1, verified end to end on E2B Cloud.</p>
+    {compact ? (
+      <ul class="status-list">
+        <li>One long-lived E2B sandbox per workspace</li>
+        <li>Pi Durable; crashed runs continue</li>
+        <li>One agent per workspace; messages admitted once</li>
+        <li>Conversation API over HTTP, SSE events</li>
+      </ul>
+    ) : (
+      <ul class="status-list">
+        {worksToday.map((w) => <li set:html={inline(w)} />)}
+      </ul>
+    )}
+  </section>
+  <section class="status-col status-plan" aria-labelledby={compact ? 'st-plan-c' : 'st-plan'}>
+    <H id={compact ? 'st-plan-c' : 'st-plan'} class="status-h"><span class="dot dot-plan" aria-hidden="true"></span>On the roadmap</H>
+    <p class="status-note">Not available yet.</p>
+    <ul class="status-list">
+      {(compact ? roadmap.filter((r) => r.tag !== 'Planned').slice(0, 4) : roadmap).map((r) => (
+        <li><span class="tag">{r.tag}</span> <span set:html={inline(r.text)} /></li>
+      ))}
+    </ul>
+  </section>
+</div>

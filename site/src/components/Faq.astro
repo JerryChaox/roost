@@ -1,0 +1,16 @@
+---
+import { inline } from '../lib/text';
+interface Props { items: { q: string; a: string }[]; id?: string; title?: string }
+const { items, id = 'faq', title = 'FAQ' } = Astro.props;
+---
+<section class="faq" aria-labelledby={id}>
+  <h2 id={id}>{title}</h2>
+  <div class="faq-list">
+    {items.map((f) => (
+      <div class="faq-item">
+        <h3 set:html={inline(f.q)} />
+        <p set:html={inline(f.a)} />
+      </div>
+    ))}
+  </div>
+</section>
