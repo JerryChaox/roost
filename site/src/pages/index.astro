@@ -1,0 +1,167 @@
+---
+import { Code } from 'astro:components';
+import { getCollection } from 'astro:content';
+import Base from '../layouts/Base.astro';
+import StatusBox from '../components/StatusBox.astro';
+import Faq from '../components/Faq.astro';
+import Cta from '../components/Cta.astro';
+import { home, problems, steps, curl, faq } from '../data/home';
+import { HOME_UPDATED } from '../data/updated.mjs';
+import { inline, formatDate } from '../lib/text';
+import { breadcrumbs, faqPage, softwareApplication, website } from '../lib/seo';
+import { REPO_URL } from '../../site.config.mjs';
+
+const site = Astro.site!;
+const pages = (await getCollection('pages')).sort((a, b) => a.data.order - b.data.order);
+const useCases = pages.filter((p) => p.data.section === 'Use cases');
+const guides = pages.filter((p) => p.data.section !== 'Use cases');
+
+const schema = [
+  softwareApplication(site, home.description),
+  website(site, home.description),
+  faqPage(site, '/', faq),
+  breadcrumbs(site, [{ name: 'Home', path: '/' }]),
+];
+---
+
+<Base title={home.title} description={home.description} schema={schema} updated={HOME_UPDATED}>
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <p class="kicker"><span class="kicker-mark">Open source</span> · Apache-2.0 · v1alpha1</p>
+        <h1 class="hero-h1">{home.h1}</h1>
+        <p class="hero-sub">{home.sub}</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href={REPO_URL} rel="noopener">View on GitHub</a>
+          <a class="btn btn-ghost" href="/docs/quickstart/">Quickstart</a>
+        </div>
+      </div>
+
+      <figure class="logcard" aria-labelledby="logcard-cap">
+        <div class="logcard-bar" aria-hidden="true">
+          <span class="logcard-dots"><i></i><i></i><i></i></span>
+          <span class="logcard-title">user-42 · c_01J9Z… · events</span>
+        </div>
+        <ol class="log">
+          <li><span class="log-k">POST</span> messages <code>{'{"id":"m-3"}'}</code><span class="log-r">202 running</span></li>
+          <li><span class="log-k">assistant</span> tool call · bash <code>npm test</code></li>
+          <li class="log-bad"><span class="log-k">✕</span> agent host killed mid-tool</li>
+          <li class="log-acc"><span class="log-k">↻</span> driver restarts it · same grant</li>
+          <li><span class="log-k">tool_result</span> interrupted</li>
+          <li><span class="log-k">assistant</span> tool call · bash <code>npm test</code></li>
+          <li><span class="log-k">assistant</span> “All tests pass.”</li>
+          <li class="log-ok"><span class="log-k">run m-3</span> completed</li>
+          <li><span class="log-k">POST</span> messages <code>{'{"id":"m-3"}'}</code><span class="log-r">200 duplicate</span></li>
+        </ol>
+        <figcaption id="logcard-cap">An illustration of the crash test in <code>scripts/e2e-m1.sh --failures</code>: the run survives its agent process, and a resent message is not answered twice.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="wrap answer-strip" aria-label="Summary">
+    <p class="answer-lead">{home.answer}</p>
+    <p class="layer-note"><strong>Where it sits.</strong> {home.layer}</p>
+    <div class="layers" aria-hidden="true">
+      <div class="layer"><span class="layer-name">Your backend</span><span class="layer-what">chat bots, apps, workers · HTTP</span></div>
+      <div class="layer layer-roost"><span class="layer-name">roost</span><span class="layer-what">one sandbox and one agent per workspace · routing · execution grants</span></div>
+      <div class="layer"><span class="layer-name">E2B sandbox <em>running</em> Pi Durable</span><span class="layer-what">the computer and the agent loop</span></div>
+    </div>
+    <p class="updated">Last updated <time datetime={HOME_UPDATED}>{formatDate(HOME_UPDATED)}</time></p>
+  </section>
+
+  <section class="wrap section" aria-labelledby="problems">
+    <p class="kicker"><span class="kicker-num">01</span> The problems</p>
+    <h2 id="problems" class="section-h">What goes wrong when every customer gets an agent</h2>
+    <div class="problems">
+      {problems.map((p, i) => (
+        <article class="problem">
+          <p class="problem-n" aria-hidden="true">{String(i + 1).padStart(2, '0')}</p>
+          <h3 class="problem-quote">“{p.quote}”</h3>
+          <p class="problem-answer">{p.answer}</p>
+          <p class="problem-how" set:html={inline(p.how)} />
+          <a class="more" href={p.link.href}>{p.link.text} <span aria-hidden="true">→</span></a>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="wrap section" aria-labelledby="how">
+    <p class="kicker"><span class="kicker-num">02</span> How it works</p>
+    <h2 id="how" class="section-h">Four steps from customer to durable agent</h2>
+    <div class="how-grid">
+      <ol class="steps">
+        {steps.map((s) => (
+          <li class="step">
+            <h3>{s.title}</h3>
+            <p set:html={inline(s.body)} />
+          </li>
+        ))}
+      </ol>
+      <div class="how-code">
+        <p class="code-label">The conversation API, from the README</p>
+        <Code code={curl} lang="bash" themes={{ light: 'github-light-default', dark: 'github-dark-default' }} defaultColor={false} />
+        <p class="code-foot">Full flow, configuration and failure tests: <a href="/docs/quickstart/">Quickstart</a>.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap section" aria-labelledby="model">
+    <p class="kicker"><span class="kicker-num">03</span> The model</p>
+    <h2 id="model" class="section-h">Workspace, conversation, run</h2>
+    <div class="model-grid">
+      <dl class="terms">
+        <div><dt>Workspace</dt><dd>The agent’s computer: one long-lived sandbox with its files and Pi’s storage. Name it after your customer.</dd></div>
+        <div><dt>Conversation</dt><dd>A Pi conversation inside a workspace, with its own transcript and inbox. Conversations in one workspace see the same files.</dd></div>
+        <div><dt>Run</dt><dd>One run of the agent, from a message to its final answer. A conversation runs one at a time.</dd></div>
+      </dl>
+      <figure class="arch">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="/architecture-dark.svg" />
+          <img src="/architecture-light.svg" width="1200" height="790" loading="lazy" decoding="async"
+            alt="A tenant contains workspaces; a workspace holds several conversations and one long-lived sandbox whose disk keeps the shared files and Pi's storage; each conversation has an inbox and runs one run at a time. Each level lists its guarantees and operator commands." />
+        </picture>
+        <figcaption>The full v1alpha1 design, not all built yet. Backups, restore and fork, rebooting a stuck sandbox, reading a sleeping workspace without waking it, the <code>roost</code> CLI, E2B Embed and Postgres are not part of M1; see the status below.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="wrap section" aria-labelledby="status">
+    <p class="kicker"><span class="kicker-num">04</span> Status</p>
+    <h2 id="status" class="section-h">What works today, and what is on the roadmap</h2>
+    <StatusBox />
+  </section>
+
+  <section class="wrap section" aria-labelledby="use-cases">
+    <p class="kicker"><span class="kicker-num">05</span> Use cases</p>
+    <h2 id="use-cases" class="section-h">What people build with it</h2>
+    <div class="cards">
+      {useCases.map((p) => (
+        <a class="card" href={`/${p.id}/`}>
+          <span class="card-sec">{p.data.section}</span>
+          <span class="card-title">{p.data.h1}</span>
+          <span class="card-desc">{p.data.description}</span>
+        </a>
+      ))}
+    </div>
+  </section>
+
+  <section class="wrap section" aria-labelledby="guides">
+    <p class="kicker"><span class="kicker-num">06</span> Guides</p>
+    <h2 id="guides" class="section-h">How durable agents behave</h2>
+    <div class="cards">
+      {guides.map((p) => (
+        <a class="card" href={`/${p.id}/`}>
+          <span class="card-sec">{p.data.section}</span>
+          <span class="card-title">{p.data.h1}</span>
+          <span class="card-desc">{p.data.description}</span>
+        </a>
+      ))}
+    </div>
+  </section>
+
+  <div class="wrap section">
+    <Faq items={faq} title="Questions about roost" />
+  </div>
+
+  <Cta />
+</Base>

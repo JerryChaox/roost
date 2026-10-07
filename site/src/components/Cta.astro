@@ -1,0 +1,20 @@
+---
+import { REPO_URL } from '../../site.config.mjs';
+interface Props { title?: string; text?: string }
+const {
+  title = 'Give every customer an agent that keeps its work.',
+  text = 'roost is open source under Apache-2.0. Read the code, run the end-to-end test on E2B Cloud, and tell us what breaks.',
+} = Astro.props;
+---
+<section class="cta" aria-label="Get roost">
+  <div class="wrap cta-inner">
+    <div>
+      <p class="cta-title">{title}</p>
+      <p class="cta-text">{text}</p>
+    </div>
+    <div class="cta-actions">
+      <a class="btn btn-primary" href={REPO_URL} rel="noopener">View roost on GitHub</a>
+      <a class="btn btn-ghost" href="/docs/quickstart/">Read the quickstart</a>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,3 @@
+# Cloudflare Pages redirects. @astrojs/sitemap writes sitemap-index.xml; the
+# conventional /sitemap.xml points to it.
+/sitemap.xml /sitemap-index.xml 301

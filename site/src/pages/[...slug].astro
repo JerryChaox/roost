@@ -1,0 +1,94 @@
+---
+import { getCollection, render, type CollectionEntry } from 'astro:content';
+import Base from '../layouts/Base.astro';
+import Faq from '../components/Faq.astro';
+import Cta from '../components/Cta.astro';
+import StatusBox from '../components/StatusBox.astro';
+import { inline, plain, formatDate } from '../lib/text';
+import { breadcrumbs, faqPage, techArticle } from '../lib/seo';
+
+export async function getStaticPaths() {
+  const pages = await getCollection('pages');
+  return pages.map((entry) => ({ params: { slug: entry.id }, props: { entry } }));
+}
+
+interface Props { entry: CollectionEntry<'pages'> }
+const { entry } = Astro.props;
+const d = entry.data;
+const site = Astro.site!;
+const path = `/${entry.id}/`;
+const { Content, headings } = await render(entry);
+const toc = headings.filter((h) => h.depth === 2);
+if (d.faq.length) toc.push({ depth: 2, slug: 'faq', text: 'FAQ' });
+
+const all = await getCollection('pages');
+const related = d.related
+  .map((id) => all.find((p) => p.id === id))
+  .filter((p): p is CollectionEntry<'pages'> => Boolean(p));
+for (const id of d.related) if (!all.some((p) => p.id === id)) throw new Error(`${entry.id}: unknown related page ${id}`);
+
+const crumbs = [
+  { name: 'Home', path: '/' },
+  { name: d.nav, path },
+];
+const schema: object[] = [
+  techArticle(site, {
+    path,
+    headline: d.h1,
+    description: d.description,
+    published: d.published,
+    updated: d.updated,
+    section: d.section,
+  }),
+  breadcrumbs(site, crumbs),
+];
+if (d.faq.length) schema.push(faqPage(site, path, d.faq));
+---
+
+<Base title={d.title} description={d.description} schema={schema} ogType="article" published={d.published} updated={d.updated}>
+  <div class="wrap page-head">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="/">Home</a></li>
+        <li><span>{d.section}</span></li>
+        <li><a href={path} aria-current="page">{d.nav}</a></li>
+      </ol>
+    </nav>
+    <h1 class="page-h1">{d.h1}</h1>
+    <p class="page-meta">
+      <span>Last updated <time datetime={d.updated}>{formatDate(d.updated)}</time></span>
+      {d.badge && <span class="badge">{d.badge}</span>}
+    </p>
+    <div class="answer" role="note" aria-label="Short answer">
+      <p class="answer-label">Short answer</p>
+      <p set:html={inline(d.answer)} />
+    </div>
+  </div>
+
+  <div class="wrap page-grid">
+    <article class="prose" aria-label={plain(d.h1)}>
+      <Content />
+      {d.faq.length > 0 && <Faq items={d.faq} />}
+    </article>
+    <aside class="aside" aria-label="On this page">
+      {toc.length > 1 && (
+        <nav class="toc" aria-labelledby="toc-h">
+          <p id="toc-h" class="aside-h">On this page</p>
+          <ol>{toc.map((h) => <li><a href={`#${h.slug}`}>{h.text}</a></li>)}</ol>
+        </nav>
+      )}
+      <div class="aside-box">
+        <p class="aside-h">Status</p>
+        <StatusBox compact />
+      </div>
+      {related.length > 0 && (
+        <nav class="related" aria-labelledby="rel-h">
+          <p id="rel-h" class="aside-h">Related</p>
+          <ul>{related.map((p) => <li><a href={`/${p.id}/`}>{p.data.h1}</a></li>)}</ul>
+        </nav>
+      )}
+    </aside>
+  </div>
+
+  <Cta />
+</Base>
